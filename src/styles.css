@@ -1,0 +1,6 @@
+/* 必要に応じて追記。Tailwind CDN 併用なら空でもOK */
+html,
+body,
+#root {
+  height: 100%;
+}
