@@ -672,48 +672,49 @@ export default function KyudoShotLogger() {
           </div>
 
           {/* 一覧テーブル */}
-          <div className="mt-4 max-h-[400px] overflow-auto border rounded-md">
-            <table className="w-full text-sm table-fixed">
-              <thead className="bg-gray-50 sticky top-0">
-                <tr>
-                  <th className="p-2 w-12 text-right">#</th>
-                  <th className="p-2 w-14">Zone</th>
-                  <th className="p-2 w-14">Ring</th>
-                  <th className="p-2 w-20">X</th>
-                  <th className="p-2 w-20">Y</th>
-                  <th className="p-2 w-[55%]">コメント</th>
-                </tr>
-              </thead>
-              <tbody>
+          {/* 一覧（コメント欄をワイド化） */}
+          <div className="mt-4 max-h-[500px] overflow-auto border-t">
+            {shots.length === 0 ? (
+              <div className="p-8 text-center text-gray-500">
+                左の的をタップして記録を開始してください。
+              </div>
+            ) : (
+              <div className="divide-y">
                 {shots.map((s) => (
-                  <tr
+                  <div
                     key={s.t}
-                    className={s.id === selectedId ? "bg-red-50" : ""}
+                    className={`p-3 transition-colors ${
+                      s.id === selectedId ? "bg-red-50" : "bg-white"
+                    }`}
                   >
-                    <td className="p-2 text-right">{s.id}</td>
-                    <td className="p-2">{s.zone}</td>
-                    <td className="p-2">{s.ring}</td>
-                    <td className="p-2">{s.x.toFixed(3)}</td>
-                    <td className="p-2">{s.y.toFixed(3)}</td>
-                    <td className="p-2">
+                    <div className="flex items-center gap-3 mb-2">
+                      <span className="bg-gray-800 text-white w-7 h-7 flex items-center justify-center rounded-full text-xs font-bold shadow-sm">
+                        {s.id}
+                      </span>
+                      <span
+                        className={`text-xs px-2 py-0.5 rounded font-semibold ${
+                          s.zone === "的なら"
+                            ? "bg-red-100 text-red-700"
+                            : s.zone === "安土"
+                            ? "bg-orange-100 text-orange-700"
+                            : "bg-gray-100 text-gray-600"
+                        }`}
+                      >
+                        {s.zone}
+                      </span>
+                    </div>
+                    <div className="w-full">
                       <input
-                        className="border rounded-md p-2 w-full"
+                        className="w-full border border-gray-300 rounded-lg p-3 text-base focus:ring-2 focus:ring-blue-500 outline-none shadow-sm"
                         value={s.comment}
                         onChange={(e) => updateComment(s.id, e.target.value)}
-                        placeholder="この射の詳細コメント"
+                        placeholder={`${s.id}射目のコメントを入力...`}
                       />
-                    </td>
-                  </tr>
+                    </div>
+                  </div>
                 ))}
-                {shots.length === 0 && (
-                  <tr>
-                    <td className="p-6 text-center text-gray-500" colSpan={6}>
-                      左の画面をクリックして記録を開始してください。
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+              </div>
+            )}
           </div>
         </div>
       </div>
