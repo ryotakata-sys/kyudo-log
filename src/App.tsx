@@ -693,7 +693,7 @@ export default function KyudoShotLogger() {
                       </span>
                       <span
                         className={`text-xs px-2 py-0.5 rounded font-semibold ${
-                          s.zone === "的なら"
+                          s.zone === "的"
                             ? "bg-red-100 text-red-700"
                             : s.zone === "安土"
                             ? "bg-orange-100 text-orange-700"
