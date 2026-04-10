@@ -1,727 +1,628 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import {
+  Undo,
+  Save,
+  Calendar,
+  Database,
+  Upload,
+  RefreshCw,
+  BarChart2,
+  X,
+  Trash2,
+} from "lucide-react";
 
 /**
- * Kyudo Shot Logger v3.5 (PWA-ready)
- * - 三的（中央＋左右）
- * - 的サイズ: 1/10、間隔: 9.6R（前回の3倍）
- * - 安土: v3.2比 さらに上方向に倍（高さ 8.8R）
- * - マーカーをドラッグで微調整（マウス＆タッチ）
- * - CSV出力：日付/場所/全体コメント/各射コメントを含む（改行安全）
- * - PNG出力：下部に 日付・場所・全体コメント・各射一覧（コメント含む）を描画
- * - localStorage 自動保存
- * - UI: 全体コメントを日付/場所の次の行、各射コメント欄ワイド化
+ * 弓道「矢所ログ」V5.3 Boundary Lock Stable
+ * - 最小ズーム倍率を 1.0x に制限（iPad画面いっぱいの表示を維持）
+ * - ピボットズーム（指の重心基点）の継続採用
+ * - 移動・ズーム中の誤タップ防止
  */
 
-type Zone = "的" | "安土" | "階段" | "外";
-type Shot = {
+type Shot = { id: number; x: number; y: number; zone: string; comment: string };
+type HistoryRecord = {
   id: number;
-  x: number;
-  y: number;
-  r: number;
-  ring: number;
-  zone: Zone;
-  comment: string;
-  t: number;
+  date: string;
+  place: string;
+  note: string;
+  shots: Shot[];
 };
 
-export default function KyudoShotLogger() {
-  const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), []);
-  const [date, setDate] = useState(todayStr);
+const R = 50;
+const TARGET_SPACING = 9.6 * R;
+const ANDUCHI_W = TARGET_SPACING * 2 + R * 4;
+const ANDUCHI_H = 8.8 * R;
+const STAIRS_H = 3.0 * R;
+const STORAGE_KEY = "kyudo-log-history";
+
+const getAIAnalysis = (shots: Shot[]) => {
+  if (shots.length === 0) return "データがありません。";
+  const avgX = shots.reduce((acc, s) => acc + s.x, 0) / shots.length;
+  const avgY = shots.reduce((acc, s) => acc + s.y, 0) / shots.length;
+  const hitRate =
+    (shots.filter((s) => s.zone === "的な").length / shots.length) * 100;
+  let report = `【AI矢所分析】\n\n`;
+  if (avgX > 15) report += `・「右逸」傾向。妻手の緩みに注意。\n\n`;
+  else if (avgX < -15) report += `・「前矢」傾向。押し手・物見を確認。\n\n`;
+  else report += `・左右の筋は安定しています。\n\n`;
+  if (avgY < ANDUCHI_H / 3 - 15) report += `・矢所が高い。狙いを確認。\n\n`;
+  else if (avgY > ANDUCHI_H / 3 + 15)
+    report += `・「下矢」傾向。肩の上がりを確認。\n\n`;
+  else report += `・上下の高さが揃っています。\n\n`;
+  report += `【総評】的中率 ${hitRate.toFixed(1)}%。`;
+  return report;
+};
+
+const App: React.FC = () => {
+  const [shots, setShots] = useState<Shot[]>([]);
+  const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
   const [place, setPlace] = useState("");
   const [note, setNote] = useState("");
-  const [shots, setShots] = useState<Shot[]>([]);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [dragId, setDragId] = useState<number | null>(null);
+  const [history, setHistory] = useState<HistoryRecord[]>([]);
+  const [editingId, setEditingId] = useState<number | null>(null);
 
-  const selected = shots.find((s) => s.id === selectedId) || null;
+  // ズーム・移動状態
+  const [zoom, setZoom] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
 
-  const svgRef = useRef<SVGSVGElement | null>(null);
-  const size = 640,
-    padding = 16;
-  const cx = size / 2,
-    cy = size / 2;
-  const RINGS = 5;
+  const [isRangeMode, setIsRangeMode] = useState(false);
+  const [startDate, setStartDate] = useState(
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .split("T")[0]
+  );
+  const [endDate, setEndDate] = useState(
+    new Date().toISOString().split("T")[0]
+  );
 
-  // 的サイズ & 間隔
-  const R_base = Math.min(cx, cy) - padding - 80;
-  const R = R_base * 0.1; // 1/10
-  const neighborOffset = R * 9.6; // 3.2R × 3
+  const svgRef = useRef<SVGSVGElement>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
 
-  // 三的中心
-  const centers = [
-    { x: cx - neighborOffset, y: cy },
-    { x: cx, y: cy },
-    { x: cx + neighborOffset, y: cy },
-  ];
+  const touchDistRef = useRef<number | null>(null);
+  const lastTouchRef = useRef({ x: 0, y: 0 });
+  const hasMovedRef = useRef(false);
+  const isMultiTouchRef = useRef(false);
 
-  // 安土（v3.2 → さらに上へ倍：高さ 8.8R、下端は据え置き）
-  const azuchi = {
-    x: centers[0].x - R * 1.6,
-    y: cy - R * 6.8, // v3.2: -2.4R → さらに 4.4R 上へ
-    w: centers[2].x + R * 1.6 - (centers[0].x - R * 1.6),
-    h: R * 8.8,
-    r: 18,
-  };
+  useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved)
+      setHistory(
+        JSON.parse(saved).sort((a: any, b: any) => b.date.localeCompare(a.date))
+      );
+  }, []);
 
-  // 階段（安土幅に追従）
-  const stairs = {
-    x: azuchi.x,
-    y: azuchi.y + azuchi.h + 16,
-    w: azuchi.w,
-    h: 56,
-    steps: 3,
-  };
+  const filteredHistory = useMemo(
+    () =>
+      isRangeMode
+        ? history.filter((h) => h.date >= startDate && h.date <= endDate)
+        : history,
+    [history, isRangeMode, startDate, endDate]
+  );
 
-  // ---- helpers ----
-  const clamp = (v: number, min: number, max: number) =>
-    Math.max(min, Math.min(max, v));
-  const computeRing = (rNorm: number) =>
-    rNorm > 1
-      ? 0
-      : Math.max(
-          1,
-          Math.min(RINGS, Math.ceil(clamp(rNorm, 0, 0.999999) * RINGS))
-        );
-
-  function zoneFromPoint(px: number, py: number): Zone {
-    const dx = px - cx,
-      dy = cy - py;
-    const rNorm = Math.hypot(dx, dy) / R;
-    if (rNorm <= 1) return "的";
-    if (
-      px >= stairs.x &&
-      px <= stairs.x + stairs.w &&
-      py >= stairs.y &&
-      py <= stairs.y + stairs.h
-    )
-      return "階段";
-    if (
-      px >= azuchi.x &&
-      px <= azuchi.x + azuchi.w &&
-      py >= azuchi.y &&
-      py <= azuchi.y + azuchi.h
-    )
-      return "安土";
-    return "外";
-  }
-
-  const nextId = () => shots.length + 1;
-
-  function svgPointFromMouseEvent(e: React.MouseEvent) {
-    const svg = svgRef.current;
-    if (!svg) return null;
-    const pt = (svg as any).createSVGPoint();
-    pt.x = e.clientX;
-    pt.y = e.clientY;
-    const ctm = svg.getScreenCTM();
-    if (!ctm) return null;
-    const sp = pt.matrixTransform(ctm.inverse());
-    return { x: sp.x, y: sp.y };
-  }
-  function svgPointFromTouchEvent(e: React.TouchEvent) {
-    const svg = svgRef.current;
-    if (!svg) return null;
-    const t = e.touches[0] || e.changedTouches[0];
-    if (!t) return null;
-    const pt = (svg as any).createSVGPoint();
-    pt.x = t.clientX;
-    pt.y = t.clientY;
-    const ctm = svg.getScreenCTM();
-    if (!ctm) return null;
-    const sp = pt.matrixTransform(ctm.inverse());
-    return { x: sp.x, y: sp.y };
-  }
-
-  // クリックで追加
-  function handleTargetClick(e: React.MouseEvent) {
-    if (dragId !== null) return; // ドラッグ中は無効
-    const pt = svgPointFromMouseEvent(e);
-    if (!pt) return;
-    const dx = pt.x - cx,
-      dy = cy - pt.y;
-    const rNorm = Math.hypot(dx, dy) / R;
-    const shot: Shot = {
-      id: nextId(),
-      x: dx / R,
-      y: dy / R,
-      r: rNorm,
-      ring: computeRing(rNorm),
-      zone: zoneFromPoint(pt.x, pt.y),
-      comment: "",
-      t: Date.now(),
+  const stats = useMemo(() => {
+    const all = filteredHistory.flatMap((h) => h.shots);
+    const hits = all.filter((s) => s.zone === "的な").length;
+    return {
+      total: all.length,
+      hits,
+      rate: all.length > 0 ? ((hits / all.length) * 100).toFixed(1) : "0.0",
+      all,
     };
-    setShots((p) => [...p, shot]);
-    setSelectedId(shot.id);
-  }
+  }, [filteredHistory]);
 
-  // ドラッグ（マウス）
-  function handleMarkerMouseDown(id: number, e: React.MouseEvent<SVGGElement>) {
-    e.stopPropagation();
-    setSelectedId(id);
-    setDragId(id);
-  }
-  function handleSvgMouseMove(e: React.MouseEvent) {
-    if (dragId === null) return;
-    const pt = svgPointFromMouseEvent(e);
-    if (!pt) return;
-    const dxR = (pt.x - cx) / R,
-      dyR = (cy - pt.y) / R;
-    const rNorm = Math.hypot(dxR, dyR);
-    const ring = computeRing(rNorm);
-    const zone = zoneFromPoint(pt.x, pt.y);
-    setShots((prev) =>
-      prev.map((s) =>
-        s.id === dragId ? { ...s, x: dxR, y: dyR, r: rNorm, ring, zone } : s
-      )
-    );
-  }
-  function handleSvgMouseUp() {
-    setDragId(null);
-  }
-
-  // ドラッグ（タッチ）
-  function handleMarkerTouchStart(
-    id: number,
-    e: React.TouchEvent<SVGGElement>
-  ) {
-    e.stopPropagation();
-    setSelectedId(id);
-    setDragId(id);
-  }
-  function handleSvgTouchMove(e: React.TouchEvent) {
-    if (dragId === null) return;
-    const pt = svgPointFromTouchEvent(e);
-    if (!pt) return;
-    const dxR = (pt.x - cx) / R,
-      dyR = (cy - pt.y) / R;
-    const rNorm = Math.hypot(dxR, dyR);
-    const ring = computeRing(rNorm);
-    const zone = zoneFromPoint(pt.x, pt.y);
-    setShots((prev) =>
-      prev.map((s) =>
-        s.id === dragId ? { ...s, x: dxR, y: dyR, r: rNorm, ring, zone } : s
-      )
-    );
-  }
-  function handleSvgTouchEnd() {
-    setDragId(null);
-  }
-
-  // 編集
-  function undo() {
-    setShots((p) => p.slice(0, -1));
-    setSelectedId(null);
-  }
-  function removeSelected() {
-    if (!selected) return;
-    setShots((p) =>
-      p.filter((s) => s.id !== selected.id).map((s, i) => ({ ...s, id: i + 1 }))
-    );
-    setSelectedId(null);
-  }
-  function clearAll() {
-    if (!confirm("全ての矢所を削除します。よろしいですか？")) return;
+  const resetUI = () => {
+    setEditingId(null);
     setShots([]);
-    setSelectedId(null);
-  }
-  const updateComment = (id: number, v: string) =>
-    setShots((p) => p.map((s) => (s.id === id ? { ...s, comment: v } : s)));
+    setPlace("");
+    setNote("");
+    setZoom(1);
+    setOffset({ x: 0, y: 0 });
+  };
 
-  // ---- CSV & PNG ----
-  function sanitizeComment(val: string | undefined | null) {
-    const v = val ?? "";
-    let out = "";
-    for (let i = 0; i < v.length; i++)
-      out += v[i] === "\n" || v[i] === "\r" ? " " : v[i];
-    return out;
-  }
-  function csvEscape(val: any) {
-    if (val === undefined || val === null) return "";
-    const v = String(val);
-    if (v.includes(",") || v.includes('"') || v.includes("\n")) {
-      return '"' + v.split('"').join('""') + '"';
-    }
-    return v;
-  }
-  function exportCSV() {
-    const header = [
-      "date",
-      "place",
-      "note",
-      "id",
-      "x",
-      "y",
-      "r",
-      "ring",
-      "zone",
-      "comment",
-      "timestamp",
-    ];
-    const rows = shots.map((s) => [
-      date,
-      place,
-      note,
-      s.id,
-      s.x.toFixed(4),
-      s.y.toFixed(4),
-      s.r.toFixed(4),
-      s.ring,
-      s.zone,
-      sanitizeComment(s.comment),
-      s.t,
-    ]);
-    const csv = [
-      header.map(csvEscape).join(","),
-      ...rows.map((r) => r.map(csvEscape).join(",")),
-    ].join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `kyudo_shots_${date}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+  const saveRecord = () => {
+    const newId = editingId || Date.now();
+    const newH = editingId
+      ? history.map((h) =>
+          h.id === editingId ? { ...h, date, place, note, shots } : h
+        )
+      : [{ id: newId, date, place, note, shots }, ...history];
+    setHistory([...newH].sort((a, b) => b.date.localeCompare(a.date)));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(newH));
+    setEditingId(newId);
+    alert("保存完了");
+  };
 
-  function wrapLines(
-    ctx: CanvasRenderingContext2D,
-    text: string,
-    maxW: number
-  ) {
-    const words = text.split(/\s+/);
-    const lines: string[] = [];
-    let cur = "";
-    for (const w of words) {
-      const t = cur ? cur + " " + w : w;
-      if (ctx.measureText(t).width <= maxW) cur = t;
-      else {
-        if (cur) lines.push(cur);
-        cur = w;
-      }
-    }
-    if (cur) lines.push(cur);
-    return lines;
-  }
+  const loadHistory = (h: HistoryRecord) => {
+    setIsRangeMode(false);
+    setEditingId(h.id);
+    setDate(h.date);
+    setPlace(h.place);
+    setNote(h.note);
+    setShots(h.shots);
+    setZoom(1);
+    setOffset({ x: 0, y: 0 });
+  };
 
-  async function exportPNG() {
-    const svg = svgRef.current;
-    if (!svg) return;
+  const deleteRecord = () => {
+    if (!editingId || !confirm("この記録を削除しますか？")) return;
+    const newH = history.filter((h) => h.id !== editingId);
+    setHistory(newH);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(newH));
+    resetUI();
+    alert("削除完了");
+  };
 
-    const serializer = new XMLSerializer();
-    const svgStr = serializer.serializeToString(svg);
-    const blob = new Blob([svgStr], { type: "image/svg+xml;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const img = new Image();
-
-    img.onload = () => {
-      const svgW = svg.viewBox.baseVal.width,
-        svgH = svg.viewBox.baseVal.height;
-
-      const pad = 16,
-        lineH = 18,
-        maxTextWidth = svgW - pad * 2;
-
-      const tmp = document.createElement("canvas");
-      const tctx = tmp.getContext("2d")!;
-      tctx.font = "14px sans-serif";
-
-      const header = `日付: ${date}　場所: ${place}`;
-      const noteLines = wrapLines(
-        tctx,
-        `全体コメント: ${note || "(なし)"}`,
-        maxTextWidth
+  const handleTouchStart = (e: React.TouchEvent) => {
+    hasMovedRef.current = false;
+    isMultiTouchRef.current = e.touches.length > 1;
+    if (e.touches.length === 2) {
+      touchDistRef.current = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
       );
+    }
+    lastTouchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  };
 
-      const shotLines: string[] = shots.map((s) => {
-        const xy = `x=${s.x.toFixed(3)}, y=${s.y.toFixed(3)}`;
-        const base = `#${s.id} [${s.zone}${s.ring ? `/${s.ring}` : ""}] ${xy}`;
-        const c = sanitizeComment(s.comment || "");
-        return c ? `${base} ｜ ${c}` : base;
-      });
-      const wrappedShotLines = shotLines.flatMap((l) =>
-        wrapLines(tctx, l, maxTextWidth)
+  const handleTouchMove = (e: React.TouchEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+
+    hasMovedRef.current = true;
+
+    if (e.touches.length === 2 && touchDistRef.current !== null) {
+      const centerX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      const centerY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
       );
+      const delta = dist / touchDistRef.current;
 
-      const metaLines =
-        1 + noteLines.length + Math.max(1, wrappedShotLines.length);
-      const metaPanelH = pad * 2 + lineH * metaLines;
+      // 最小倍率を 1.0x に制限
+      const nextZoom = Math.min(Math.max(zoom * delta, 1.0), 5);
 
-      const canvas = document.createElement("canvas");
-      canvas.width = svgW;
-      canvas.height = svgH + metaPanelH;
-      const ctx = canvas.getContext("2d")!;
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      ctx.drawImage(img, 0, 0);
-
-      const y0 = svgH;
-      ctx.fillStyle = "#f8fafc";
-      ctx.fillRect(0, y0, svgW, metaPanelH);
-      ctx.strokeStyle = "#e5e7eb";
-      ctx.strokeRect(0.5, y0 + 0.5, svgW - 1, metaPanelH - 1);
-
-      ctx.fillStyle = "#111827";
-      ctx.font = "14px sans-serif";
-      let y = y0 + pad + 12;
-
-      ctx.fillText(header, pad, y);
-      y += lineH;
-
-      for (const ln of noteLines) {
-        ctx.fillText(ln, pad, y);
-        y += lineH;
+      if (nextZoom !== zoom) {
+        setOffset((prev) => ({
+          x: centerX - (centerX - prev.x) * (nextZoom / zoom),
+          y: centerY - (centerY - prev.y) * (nextZoom / zoom),
+        }));
+        setZoom(nextZoom);
       }
+      touchDistRef.current = dist;
+    } else if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      const dx = touch.clientX - lastTouchRef.current.x;
+      const dy = touch.clientY - lastTouchRef.current.y;
+      setOffset((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
+    }
+    lastTouchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  };
 
-      ctx.strokeStyle = "#e5e7eb";
-      ctx.beginPath();
-      ctx.moveTo(pad, y - lineH / 2);
-      ctx.lineTo(svgW - pad, y - lineH / 2);
-      ctx.stroke();
-
-      ctx.fillStyle = "#111827";
-      for (const ln of wrappedShotLines) {
-        ctx.fillText(ln, pad, y);
-        y += lineH;
-      }
-
-      canvas.toBlob((pngBlob) => {
-        if (!pngBlob) return;
-        const pngUrl = URL.createObjectURL(pngBlob);
-        const a = document.createElement("a");
-        a.href = pngUrl;
-        a.download = `kyudo_${date}.png`;
-        a.click();
-        URL.revokeObjectURL(pngUrl);
-      }, "image/png");
-
-      URL.revokeObjectURL(url);
-    };
-    img.onerror = () => URL.revokeObjectURL(url);
-    img.src = url;
-  }
-
-  // ---- localStorage ----
-  useEffect(() => {
-    const key = "kyudo_shot_logger_v3";
-    try {
-      const saved = localStorage.getItem(key);
-      if (saved) {
-        const obj = JSON.parse(saved);
-        setDate(obj.date ?? todayStr);
-        setPlace(obj.place ?? "");
-        setNote(obj.note ?? "");
-        setShots(Array.isArray(obj.shots) ? obj.shots : []);
-      }
-    } catch {}
-  }, [todayStr]);
-  useEffect(() => {
-    const key = "kyudo_shot_logger_v3";
-    try {
-      localStorage.setItem(key, JSON.stringify({ date, place, note, shots }));
-    } catch {}
-  }, [date, place, note, shots]);
-
-  // 描画補助
-  const markerXY = (s: Shot) => ({ x: cx + s.x * R, y: cy - s.y * R });
-  const zoneColor = (z: Zone) =>
-    z === "的"
-      ? { fill: "#ef4444", stroke: "#111827" }
-      : z === "安土"
-      ? { fill: "#f59e0b", stroke: "#78350f" }
-      : z === "階段"
-      ? { fill: "#8b5cf6", stroke: "#4c1d95" }
-      : { fill: "#6b7280", stroke: "#111827" };
+  const handleInteraction = (e: any) => {
+    if (
+      isRangeMode ||
+      !svgRef.current ||
+      hasMovedRef.current ||
+      isMultiTouchRef.current
+    )
+      return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const clientX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
+    const clientY = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
+    if (
+      clientX < rect.left ||
+      clientX > rect.right ||
+      clientY < rect.top ||
+      clientY > rect.bottom
+    )
+      return;
+    const x =
+      (clientX - rect.left - rect.width / 2) * ((ANDUCHI_W + 100) / rect.width);
+    const y =
+      (clientY - rect.top - rect.height / 2) *
+      ((ANDUCHI_H + STAIRS_H + 100) / rect.height);
+    const zone =
+      Math.sqrt(x * x + (y - ANDUCHI_H / 3) ** 2) <= R
+        ? "的な"
+        : y < ANDUCHI_H / 2
+        ? "安土"
+        : "階段";
+    setShots([...shots, { id: Date.now(), x, y, zone, comment: "" }]);
+  };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900 p-4">
-      <div className="max-w-6xl mx-auto grid gap-6 lg:grid-cols-[700px,1fr]">
-        {/* 左：シーン */}
-        <div className="bg-white rounded-2xl shadow p-4">
-          <h1 className="text-xl font-semibold mb-2">弓道 矢所ログ</h1>
-          <div className="text-sm text-gray-500 mb-2">
-            クリック／ドラッグで矢所を操作（的／安土／階段／外）
-          </div>
-
-          <svg
-            ref={svgRef}
-            width={size}
-            height={size}
-            viewBox={`0 0 ${size} ${size}`}
-            className={`rounded-xl border bg-white ${
-              dragId !== null ? "cursor-grabbing" : "cursor-crosshair"
-            }`}
-            onClick={handleTargetClick}
-            onMouseMove={handleSvgMouseMove}
-            onMouseUp={handleSvgMouseUp}
-            onMouseLeave={handleSvgMouseUp}
-            onTouchMove={handleSvgTouchMove}
-            onTouchEnd={handleSvgTouchEnd}
-          >
-            {/* 背景 */}
-            <rect x={0} y={0} width={size} height={size} fill="#fff" />
-
-            {/* 安土 */}
-            <rect
-              x={azuchi.x}
-              y={azuchi.y}
-              width={azuchi.w}
-              height={azuchi.h}
-              rx={azuchi.r}
-              ry={azuchi.r}
-              fill="#F5E6C8"
-              stroke="#C9AE7D"
-              strokeWidth={2}
-            />
-            <text
-              x={azuchi.x + azuchi.w - 8}
-              y={azuchi.y + 20}
-              textAnchor="end"
-              fontSize={12}
-              fill="#7c5d2f"
-            >
-              安土
-            </text>
-
-            {/* 階段 */}
-            {[...Array(stairs.steps)].map((_, i) => {
-              const stepH = stairs.h / stairs.steps,
-                y = stairs.y + i * stepH;
-              return (
-                <rect
-                  key={i}
-                  x={stairs.x}
-                  y={y}
-                  width={stairs.w}
-                  height={stepH - 2}
-                  fill="#e5e7eb"
-                  stroke="#9ca3af"
-                />
-              );
-            })}
-            <text
-              x={stairs.x + stairs.w - 8}
-              y={stairs.y - 6}
-              textAnchor="end"
-              fontSize={12}
-              fill="#6b7280"
-            >
-              階段
-            </text>
-
-            {/* 三的 */}
-            {centers.map((c, ci) => (
-              <g key={ci}>
-                {[...Array(RINGS)].map((_, i) => {
-                  const frac = 1 - i / RINGS,
-                    rad = R * frac;
-                  const fill = i % 2 === 0 ? "#111827" : "#f9fafb";
-                  return (
-                    <circle
-                      key={i}
-                      cx={c.x}
-                      cy={c.y}
-                      r={rad}
-                      fill={fill}
-                      stroke="#9ca3af"
-                      strokeWidth={i === 0 ? 2 : 1}
-                    />
-                  );
-                })}
-                {ci === 1 && (
-                  <>
-                    <line
-                      x1={c.x - R}
-                      x2={c.x + R}
-                      y1={c.y}
-                      y2={c.y}
-                      stroke="#e5e7eb"
-                      strokeWidth={1}
-                    />
-                    <line
-                      x1={c.x}
-                      x2={c.x}
-                      y1={c.y - R}
-                      y2={c.y + R}
-                      stroke="#e5e7eb"
-                      strokeWidth={1}
-                    />
-                    <circle
-                      cx={c.x}
-                      cy={c.y}
-                      r={R}
-                      fill="none"
-                      stroke="#111827"
-                      strokeWidth={2}
-                    />
-                  </>
-                )}
-              </g>
-            ))}
-
-            {/* 矢マーカー */}
-            {shots.map((s) => {
-              const { x, y } = markerXY(s);
-              const isSel = s.id === selectedId;
-              const c = zoneColor(s.zone);
-              return (
-                <g
-                  key={s.t}
-                  onMouseDown={(ev) => handleMarkerMouseDown(s.id, ev)}
-                  onTouchStart={(ev) => handleMarkerTouchStart(s.id, ev)}
-                  onClick={(ev) => {
-                    ev.stopPropagation();
-                    setSelectedId(s.id);
-                  }}
-                  style={{ cursor: "grab" }}
-                >
-                  <circle
-                    cx={x}
-                    cy={y}
-                    r={8}
-                    fill={c.fill}
-                    stroke={c.stroke}
-                    strokeWidth={isSel ? 3 : 2}
-                  />
-                  <text
-                    x={x}
-                    y={y + 4}
-                    fontSize={11}
-                    textAnchor="middle"
-                    fill="#fff"
-                  >
-                    {s.id}
-                  </text>
-                </g>
-              );
-            })}
-          </svg>
-
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              onClick={undo}
-              className="px-3 py-1.5 bg-gray-900 text-white rounded-md text-sm"
-              disabled={shots.length === 0}
-            >
-              一手戻す
-            </button>
-            <button
-              onClick={removeSelected}
-              className="px-3 py-1.5 bg-gray-100 border rounded-md text-sm"
-              disabled={!selected}
-            >
-              選択を削除
-            </button>
-            <button
-              onClick={clearAll}
-              className="px-3 py-1.5 bg-gray-100 border rounded-md text-sm"
-              disabled={shots.length === 0}
-            >
-              全てクリア
-            </button>
-            <button
-              onClick={exportPNG}
-              className="px-3 py-1.5 bg-gray-100 border rounded-md text-sm"
-              disabled={shots.length === 0}
-            >
-              PNGとして保存
-            </button>
-            <button
-              onClick={exportCSV}
-              className="px-3 py-1.5 bg-gray-900 text-white rounded-md text-sm"
-              disabled={shots.length === 0}
-            >
-              CSV出力
-            </button>
-          </div>
+    <div
+      className="min-h-screen bg-white text-gray-900 font-sans overflow-hidden touch-none"
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={(e) => {
+        if (!isMultiTouchRef.current && !hasMovedRef.current)
+          handleInteraction(e);
+      }}
+    >
+      <header className="bg-black text-white px-8 py-5 flex justify-between items-center sticky top-0 z-50 shadow-xl">
+        <div className="font-black text-xl italic uppercase tracking-widest">
+          弓道 矢所ログ
         </div>
+        <div className="flex gap-3">
+          {!isRangeMode ? (
+            <>
+              {editingId && (
+                <button
+                  onClick={deleteRecord}
+                  className="bg-red-900/50 hover:bg-red-700 px-4 py-2 rounded-lg font-black flex items-center gap-2 transition border border-red-800"
+                >
+                  <Trash2 size={18} />
+                  削除
+                </button>
+              )}
+              <button
+                onClick={resetUI}
+                className="bg-gray-800 px-4 py-2 rounded-lg text-xs font-bold"
+              >
+                新規
+              </button>
+              <button
+                onClick={saveRecord}
+                className="bg-emerald-700 px-6 py-2 rounded-lg font-black flex items-center gap-2 transition shadow-lg"
+              >
+                <Save size={18} />
+                保存
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => setIsRangeMode(false)}
+              className="bg-red-700 px-6 py-2 rounded-lg font-black flex items-center gap-2 transition"
+            >
+              <X size={18} />
+              終了
+            </button>
+          )}
+        </div>
+      </header>
 
-        {/* 右：メモ＆一覧 */}
-        <div className="bg-white rounded-2xl shadow p-4">
-          <h2 className="text-lg font-semibold mb-3">稽古メモ</h2>
+      <div
+        className="transition-transform duration-75 origin-top-left"
+        style={{
+          transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`,
+        }}
+      >
+        <div className="p-8 pb-40">
+          <main className="max-w-[95%] mx-auto grid lg:grid-cols-[1fr,400px] gap-8">
+            <div className="space-y-6">
+              <section className="bg-gray-50 p-6 rounded-3xl border flex gap-10 shadow-sm">
+                <div>
+                  <label className="text-[10px] font-black text-gray-400 block mb-1 uppercase tracking-widest">
+                    Date
+                  </label>
+                  <input
+                    type="date"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    className="bg-transparent text-2xl font-black outline-none"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="text-[10px] font-black text-gray-400 block mb-1 uppercase tracking-widest">
+                    Place
+                  </label>
+                  <input
+                    type="text"
+                    value={place}
+                    onChange={(e) => setPlace(e.target.value)}
+                    className="bg-transparent text-2xl font-black outline-none w-full border-b"
+                    placeholder="稽古場所"
+                  />
+                </div>
+              </section>
 
-          {/* 1行目：日付・場所 */}
-          <div className="grid grid-cols-2 gap-3">
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="border rounded-md p-2"
-            />
-            <input
-              type="text"
-              placeholder="稽古場所"
-              value={place}
-              onChange={(e) => setPlace(e.target.value)}
-              className="border rounded-md p-2"
-            />
-          </div>
-
-          {/* 2行目：全体コメント（横幅いっぱい） */}
-          <div className="mt-3">
-            <label className="text-sm text-gray-600 block mb-1">
-              全体コメント
-            </label>
-            <textarea
-              rows={3}
-              placeholder="例：本日は風あり。離れで弓手が流れやすい 等"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              className="border rounded-md p-2 w-full"
-            />
-          </div>
-
-          {/* 一覧テーブル */}
-          {/* 一覧（コメント欄をワイド化） */}
-          <div className="mt-4 max-h-[500px] overflow-auto border-t">
-            {shots.length === 0 ? (
-              <div className="p-8 text-center text-gray-500">
-                左の的をタップして記録を開始してください。
-              </div>
-            ) : (
-              <div className="divide-y">
-                {shots.map((s) => (
-                  <div
-                    key={s.t}
-                    className={`p-3 transition-colors ${
-                      s.id === selectedId ? "bg-red-50" : "bg-white"
-                    }`}
+              <div className="relative rounded-[2.5rem] border-4 border-gray-100 overflow-hidden bg-gray-100 shadow-inner">
+                <div className="w-full h-full select-none">
+                  <svg
+                    ref={svgRef}
+                    viewBox={`-${(ANDUCHI_W + 100) / 2} -${
+                      (ANDUCHI_H + STAIRS_H + 100) / 2
+                    } ${ANDUCHI_W + 100} ${ANDUCHI_H + STAIRS_H + 100}`}
+                    className="w-full h-auto cursor-crosshair"
+                    onPointerDown={(e) => {
+                      if (e.pointerType === "mouse") handleInteraction(e);
+                    }}
                   >
-                    <div className="flex items-center gap-3 mb-2">
-                      <span className="bg-gray-800 text-white w-7 h-7 flex items-center justify-center rounded-full text-xs font-bold shadow-sm">
-                        {s.id}
-                      </span>
-                      <span
-                        className={`text-xs px-2 py-0.5 rounded font-semibold ${
-                          s.zone === "的"
-                            ? "bg-red-100 text-red-700"
-                            : s.zone === "安土"
-                            ? "bg-orange-100 text-orange-700"
-                            : "bg-gray-100 text-gray-600"
+                    <rect
+                      x={-ANDUCHI_W / 2}
+                      y={-ANDUCHI_H / 2}
+                      width={ANDUCHI_W}
+                      height={ANDUCHI_H}
+                      fill="#d2b48c"
+                    />
+                    <rect
+                      x={-ANDUCHI_W / 2}
+                      y={ANDUCHI_H / 2}
+                      width={ANDUCHI_W}
+                      height={STAIRS_H}
+                      fill="#4a634a"
+                    />
+                    {[-TARGET_SPACING, 0, TARGET_SPACING].map((ox) => (
+                      <g
+                        key={ox}
+                        transform={`translate(${ox}, ${ANDUCHI_H / 3})`}
+                      >
+                        {[5, 4, 3, 2, 1].map((i) => (
+                          <circle
+                            key={i}
+                            r={(R / 5) * i}
+                            fill={i % 2 === 0 ? "white" : "black"}
+                            stroke="#333"
+                            strokeWidth="0.5"
+                          />
+                        ))}
+                      </g>
+                    ))}
+                    {(isRangeMode ? stats.all : shots).map((s, idx) => (
+                      <g key={s.id} transform={`translate(${s.x}, ${s.y})`}>
+                        <circle
+                          r={isRangeMode ? 10 / zoom : 15}
+                          fill={isRangeMode ? "rgba(0,0,0,0.5)" : "white"}
+                          stroke={s.zone === "的な" ? "#ef4444" : "#374151"}
+                          strokeWidth={2}
+                        />
+                        {!isRangeMode && (
+                          <text
+                            fontSize={12}
+                            textAnchor="middle"
+                            dominantBaseline="central"
+                            fontWeight="900"
+                            fill={s.zone === "的な" ? "#ef4444" : "#374151"}
+                          >
+                            {idx + 1}
+                          </text>
+                        )}
+                      </g>
+                    ))}
+                  </svg>
+                </div>
+              </div>
+              <div className="flex justify-end items-center gap-4">
+                <span className="text-[10px] font-black text-gray-300 uppercase italic tracking-widest">
+                  Zoom: {zoom.toFixed(1)}x (Min: 1.0x)
+                </span>
+                <button
+                  onClick={() => {
+                    setZoom(1);
+                    setOffset({ x: 0, y: 0 });
+                  }}
+                  className="text-[10px] font-black text-gray-400 border border-gray-200 px-3 py-1 rounded-full active:bg-gray-100 transition shadow-sm"
+                >
+                  リセット
+                </button>
+                <button
+                  onClick={() => setShots(shots.slice(0, -1))}
+                  className="bg-black text-white px-8 py-3 rounded-2xl font-black flex items-center gap-2 shadow-lg transition active:scale-95"
+                  disabled={isRangeMode}
+                >
+                  <Undo size={20} />
+                  戻す
+                </button>
+              </div>
+            </div>
+
+            <aside className="space-y-6">
+              <div className="bg-white border-2 border-gray-100 rounded-[2rem] p-6 h-[500px] overflow-y-auto shadow-sm">
+                <h3 className="text-xs font-black text-gray-400 uppercase mb-4 flex justify-between italic tracking-widest">
+                  <span>{isRangeMode ? "AI分析結果" : "Shots Note"}</span>
+                  <span>{isRangeMode ? "" : "判定 | 備考"}</span>
+                </h3>
+                {!isRangeMode ? (
+                  shots.map((s, i) => (
+                    <div
+                      key={s.id}
+                      className="flex gap-3 mb-4 border-b border-gray-50 pb-4 items-center"
+                    >
+                      <div className="w-7 h-7 bg-black text-white rounded-full flex items-center justify-center font-bold text-[10px] shrink-0">
+                        {i + 1}
+                      </div>
+                      <div
+                        className={`text-xs font-black shrink-0 w-10 ${
+                          s.zone === "的な" ? "text-red-600" : "text-gray-500"
                         }`}
                       >
-                        {s.zone}
-                      </span>
-                    </div>
-                    <div className="w-full">
+                        {s.zone === "的な" ? "的中" : "安土"}
+                      </div>
                       <input
-                        className="w-full border border-gray-300 rounded-lg p-3 text-base focus:ring-2 focus:ring-blue-500 outline-none shadow-sm"
                         value={s.comment}
-                        onChange={(e) => updateComment(s.id, e.target.value)}
-                        placeholder={`${s.id}射目のコメントを入力...`}
+                        onChange={(e) => {
+                          const n = [...shots];
+                          n[i].comment = e.target.value;
+                          setShots(n);
+                        }}
+                        className="flex-1 outline-none text-sm border-l pl-3 font-medium"
+                        placeholder="備考..."
                       />
                     </div>
+                  ))
+                ) : (
+                  <div className="bg-gray-50 p-5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap font-medium text-gray-700 border border-gray-200">
+                    {getAIAnalysis(stats.all)}
                   </div>
-                ))}
+                )}
               </div>
-            )}
-          </div>
+              <textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                className="w-full bg-gray-50 border border-gray-100 rounded-[2rem] p-6 h-32 outline-none text-sm resize-none shadow-inner"
+                placeholder="全体まとめ..."
+              />
+            </aside>
+          </main>
+
+          <section className="mt-20 border-t pt-10 px-4">
+            <h2 className="text-sm font-black text-gray-400 uppercase tracking-widest italic tracking-[0.3em] mb-8 text-center">
+              History Archive
+            </h2>
+            <div className="bg-gray-100 p-4 rounded-3xl flex items-center justify-center gap-4 border shadow-inner mb-8 max-w-2xl mx-auto">
+              <Calendar size={14} className="text-gray-400" />
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="bg-transparent text-[10px] font-bold outline-none"
+              />
+              <span className="text-gray-300">〜</span>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="bg-transparent text-[10px] font-bold outline-none"
+              />
+              <button
+                onClick={() => setIsRangeMode(true)}
+                className="bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 transition hover:bg-gray-800 shadow-md"
+              >
+                <BarChart2 size={14} />
+                期間分析
+              </button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+              <div className="p-6 rounded-3xl border text-center bg-gray-50 shadow-sm">
+                <span className="text-[10px] font-black text-gray-400 block mb-1 italic">
+                  Total
+                </span>
+                <span className="text-4xl font-black">{stats.total}</span>
+              </div>
+              <div className="p-6 rounded-3xl border text-center bg-emerald-50 border-emerald-100 shadow-sm">
+                <span className="text-[10px] font-black text-gray-400 block mb-1 text-emerald-600 italic">
+                  Hits
+                </span>
+                <span className="text-4xl font-black text-emerald-600">
+                  {stats.hits}
+                </span>
+              </div>
+              <div className="p-6 rounded-3xl border text-center bg-blue-50 border-blue-100 shadow-sm">
+                <span className="text-[10px] font-black text-gray-400 block mb-1 text-blue-700 italic">
+                  Rate
+                </span>
+                <span className="text-4xl font-black text-blue-700">
+                  {stats.rate}%
+                </span>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              {filteredHistory.map((h) => (
+                <button
+                  key={h.id}
+                  onClick={() => loadHistory(h)}
+                  className={`p-6 rounded-[2rem] border-4 text-left transition-all ${
+                    editingId === h.id
+                      ? "bg-black text-white border-black shadow-2xl scale-105"
+                      : "bg-white border-gray-100 hover:border-gray-200 shadow-sm"
+                  }`}
+                >
+                  <div className="text-xs font-mono mb-2 opacity-60">
+                    {h.date}
+                  </div>
+                  <div className="font-black truncate text-lg italic uppercase">
+                    {h.place || "PRACTICE"}
+                  </div>
+                  <div className="mt-4 text-[10px] border-t pt-2 flex justify-between opacity-80 font-bold uppercase">
+                    <span>{h.shots.length} Shots</span>
+                    <span
+                      className={
+                        editingId === h.id
+                          ? "text-emerald-400"
+                          : "text-emerald-600"
+                      }
+                    >
+                      Hits {h.shots.filter((s) => s.zone === "的な").length}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </section>
         </div>
       </div>
 
-      <footer className="text-xs text-gray-500 mt-4 max-w-6xl mx-auto">
-        ヒント：番号をドラッグで微調整できます。CSV/PNGはコメント含めて保存されます。ホーム追加でオフライン起動OK。
+      <footer className="fixed bottom-0 left-0 w-full bg-black/90 text-white p-4 flex justify-around items-center z-50 border-t border-gray-800 backdrop-blur-md">
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+          <span className="text-[10px] font-mono text-gray-400 uppercase italic">
+            V5.3 Boundary Lock
+          </span>
+        </div>
+        <div className="flex gap-4">
+          <button
+            onClick={() => importFileRef.current?.click()}
+            className="bg-gray-800 px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 hover:bg-gray-700 transition active:scale-95"
+          >
+            <Upload size={14} />
+            読込
+          </button>
+          <button
+            onClick={() => {
+              const d = localStorage.getItem(STORAGE_KEY);
+              if (!d) return;
+              const b = new Blob([d], { type: "application/json" });
+              const a = document.createElement("a");
+              a.href = URL.createObjectURL(b);
+              a.download = `backup.json`;
+              a.click();
+            }}
+            className="bg-blue-600 px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 transition shadow-lg active:scale-95"
+          >
+            <Database size={14} />
+            書出
+          </button>
+          <button
+            onClick={() => {
+              if (confirm("【警告】全データを消去して初期化しますか？")) {
+                localStorage.removeItem(STORAGE_KEY);
+                window.location.reload();
+              }
+            }}
+            className="bg-red-900/40 px-3 py-2 rounded-xl text-[10px] font-black border border-red-800 hover:bg-red-800 transition"
+          >
+            全消去
+          </button>
+          <button
+            onClick={() => window.location.reload()}
+            className="bg-gray-900 px-4 py-2 rounded-xl border border-gray-800 hover:bg-black transition"
+          >
+            <RefreshCw size={14} />
+          </button>
+        </div>
+        <input
+          ref={importFileRef}
+          type="file"
+          accept=".json"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            const r = new FileReader();
+            r.onload = (ev) => {
+              try {
+                const i = JSON.parse(ev.target?.result as string);
+                if (confirm("統合しますか？")) {
+                  const c = [...i, ...history];
+                  const u = Array.from(
+                    new Map(c.map((t) => [t.id, t])).values()
+                  );
+                  setHistory(
+                    u.sort((a: any, b: any) => b.date.localeCompare(a.date))
+                  );
+                  localStorage.setItem(STORAGE_KEY, JSON.stringify(u));
+                }
+              } catch (err) {
+                alert("Error");
+              }
+            };
+            r.readAsText(f);
+          }}
+          className="hidden"
+        />
       </footer>
     </div>
   );
-}
+};
+
+export default App;
