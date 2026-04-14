@@ -2,10 +2,10 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Undo, Save, Calendar, Database, Upload, RefreshCw, BarChart2, X, Trash2 } from "lucide-react";
 
 /**
- * 弓道「矢所ログ」V6.4 (V5.3デザイン完全復元 + 境界線ガード + 1.0x固定版)
- * - 1.0倍時は画面移動を完全無効化し、ひっかかりを解消
- * - 拡大時はiPadの画面幅を超えて画面が消えないよう移動制限を強化
- * - 左上（0,0）を基準点として、常にアプリが視界に収まるよう設計
+ * 弓道「矢所ログ」V6.5 (V5.3デザイン完全復元 + 操作ロック解除版)
+ * - 1.0倍時は通常のページスクロールを許可し、履歴を見やすく修正
+ * - 拡大時(>1.0x)のみ慣性移動を有効化し、操作性を向上
+ * - 左上（0,0）を絶対基準とし、アプリが画面外に消えるのを防止
  */
 
 type Shot = { id: number; x: number; y: number; zone: string; comment: string; };
@@ -60,15 +60,17 @@ const App: React.FC = () => {
   const hasMovedRef = useRef(false);
   const isMultiTouchRef = useRef(false);
 
+  // 【修正】1.0倍の時はブラウザのスクロールを邪魔しないように変更
   useEffect(() => {
     const preventDefault = (e: TouchEvent) => {
-      if (e.touches.length > 1 || (e.touches.length === 1 && !isRangeMode)) {
+      // 2本指操作(ズーム)中、またはズームされている時のみスクロールをロック
+      if (e.touches.length > 1 || zoom > 1.0) {
         e.preventDefault();
       }
     };
     document.addEventListener("touchmove", preventDefault, { passive: false });
     return () => document.removeEventListener("touchmove", preventDefault);
-  }, [isRangeMode]);
+  }, [zoom]);
 
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -107,11 +109,11 @@ const App: React.FC = () => {
     alert("削除完了");
   };
 
-  // 【V6.4 強化パッチ】アプリが画面外に消えないための精密な境界線計算
   const applyBounds = (newX: number, newY: number, currentZoom: number) => {
-    if (currentZoom <= 1.0) return { x: 0, y: 0 };
+    // ズームしていない時は(0,0)に固定
+    if (currentZoom <= 1.02) return { x: 0, y: 0 };
     
-    // iPadの画面サイズに基づいた限界値の計算
+    // iPadの画面サイズに基づいた限界値（ホワイトアウト防止）
     const minX = window.innerWidth * (1 - currentZoom);
     const minY = window.innerHeight * (1 - currentZoom);
     
@@ -135,9 +137,9 @@ const App: React.FC = () => {
   const handleTouchMove = (e: React.TouchEvent) => {
     const target = e.target as HTMLElement;
     if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
-    hasMovedRef.current = true;
 
     if (e.touches.length === 2 && touchDistRef.current !== null) {
+      hasMovedRef.current = true;
       const centerX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
       const centerY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
       const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
@@ -153,8 +155,9 @@ const App: React.FC = () => {
         setZoom(nextZoom);
       }
       touchDistRef.current = dist;
-    } else if (e.touches.length === 1 && zoom > 1.0) {
-      // 等倍時は移動処理自体をスキップして「ひっかかり」をゼロに
+    } else if (e.touches.length === 1 && zoom > 1.05) {
+      // ズームされている時のみ、アプリ内移動を作動
+      hasMovedRef.current = true;
       const touch = e.touches[0];
       const dx = (touch.clientX - lastTouchRef.current.x) * PAN_SENSITIVITY;
       const dy = (touch.clientY - lastTouchRef.current.y) * PAN_SENSITIVITY;
@@ -182,12 +185,11 @@ const App: React.FC = () => {
   const handleTouchEnd = (e: React.TouchEvent) => {
     if (!isMultiTouchRef.current && !hasMovedRef.current) {
       handleInteraction(e);
-    } else if (!isMultiTouchRef.current && hasMovedRef.current && zoom > 1.0) {
+    } else if (!isMultiTouchRef.current && hasMovedRef.current && zoom > 1.05) {
       requestRef.current = requestAnimationFrame(animateGlide);
     }
     
-    // スナップ判定の最適化
-    if (zoom < 1.02) {
+    if (zoom < 1.05) {
       setZoom(1);
       setOffset({ x: 0, y: 0 });
     }
@@ -206,8 +208,8 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-white text-gray-900 font-sans overflow-hidden touch-none"
-         style={{ touchAction: 'none', overscrollBehavior: 'none' }}
+    <div className="min-h-screen bg-white text-gray-900 font-sans overflow-x-hidden overflow-y-auto"
+         style={{ overscrollBehavior: 'none' }}
          onTouchStart={handleTouchStart}
          onTouchMove={handleTouchMove}
          onTouchEnd={handleTouchEnd}
@@ -310,7 +312,7 @@ const App: React.FC = () => {
       </div>
 
       <footer className="fixed bottom-0 left-0 w-full bg-black/90 text-white p-4 flex justify-around items-center z-50 border-t border-gray-800 backdrop-blur-md">
-        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic">V6.4 Boundary Lock</span></div>
+        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic">V6.5 Boundary Lock</span></div>
         <div className="flex gap-4">
           <button onClick={() => importFileRef.current?.click()} className="bg-gray-800 px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 hover:bg-gray-700 transition active:scale-95 text-white"><Upload size={14}/>読込</button>
           <button onClick={()=>{const d=localStorage.getItem(STORAGE_KEY); if(!d) return; const b=new Blob([d],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=`backup.json`; a.click();}} className="bg-blue-600 px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 transition shadow-lg active:scale-95 text-white"><Database size={14}/>書出</button>
