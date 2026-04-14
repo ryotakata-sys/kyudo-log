@@ -12,10 +12,10 @@ import {
 } from "lucide-react";
 
 /**
- * 弓道「矢所ログ」V5.3 Boundary Lock Stable
- * - 最小ズーム倍率を 1.0x に制限（iPad画面いっぱいの表示を維持）
- * - ピボットズーム（指の重心基点）の継続採用
- * - 移動・ズーム中の誤タップ防止
+ * 弓道「矢所ログ」V5.3 Boundary Lock + UX Boost
+ * - 既存デザイン・機能を完全維持
+ * - 操作感度を 1.25倍に向上
+ * - 1.0x付近での自動原点スナップを実装
  */
 
 type Shot = { id: number; x: number; y: number; zone: string; comment: string };
@@ -33,6 +33,7 @@ const ANDUCHI_W = TARGET_SPACING * 2 + R * 4;
 const ANDUCHI_H = 8.8 * R;
 const STAIRS_H = 3.0 * R;
 const STORAGE_KEY = "kyudo-log-history";
+const PAN_SENSITIVITY = 1.25; // 【注入】移動感度の向上
 
 const getAIAnalysis = (shots: Shot[]) => {
   if (shots.length === 0) return "データがありません。";
@@ -60,7 +61,6 @@ const App: React.FC = () => {
   const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
 
-  // ズーム・移動状態
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
 
@@ -178,7 +178,6 @@ const App: React.FC = () => {
       );
       const delta = dist / touchDistRef.current;
 
-      // 最小倍率を 1.0x に制限
       const nextZoom = Math.min(Math.max(zoom * delta, 1.0), 5);
 
       if (nextZoom !== zoom) {
@@ -191,11 +190,26 @@ const App: React.FC = () => {
       touchDistRef.current = dist;
     } else if (e.touches.length === 1) {
       const touch = e.touches[0];
-      const dx = touch.clientX - lastTouchRef.current.x;
-      const dy = touch.clientY - lastTouchRef.current.y;
+      // 【注入】PAN_SENSITIVITY を掛けて移動距離を伸ばす
+      const dx = (touch.clientX - lastTouchRef.current.x) * PAN_SENSITIVITY;
+      const dy = (touch.clientY - lastTouchRef.current.y) * PAN_SENSITIVITY;
       setOffset((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
     }
     lastTouchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  };
+
+  // 【注入】スナップロジックを含む End ハンドラ
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    // 既存の記録ロジック
+    if (!isMultiTouchRef.current && !hasMovedRef.current) {
+      handleInteraction(e);
+    }
+
+    // 【注入】ピンチダウン時のスナップ: 1.05倍以下なら左上原点に吸着
+    if (zoom < 1.05) {
+      setZoom(1);
+      setOffset({ x: 0, y: 0 });
+    }
   };
 
   const handleInteraction = (e: any) => {
@@ -235,10 +249,7 @@ const App: React.FC = () => {
       className="min-h-screen bg-white text-gray-900 font-sans overflow-hidden touch-none"
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
-      onTouchEnd={(e) => {
-        if (!isMultiTouchRef.current && !hasMovedRef.current)
-          handleInteraction(e);
-      }}
+      onTouchEnd={handleTouchEnd}
     >
       <header className="bg-black text-white px-8 py-5 flex justify-between items-center sticky top-0 z-50 shadow-xl">
         <div className="font-black text-xl italic uppercase tracking-widest">
