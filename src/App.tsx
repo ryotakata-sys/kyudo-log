@@ -2,11 +2,11 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Undo, Save, Calendar, Database, Upload, RefreshCw, BarChart2, X, Trash2 } from "lucide-react";
 
 /**
- * 弓道「矢所ログ」V7.9 (Perfect Restore + Data Integrity)
- * - V7.1の操作感（スクロールなし、全体移動）に完全回帰
- * - 過去データの「的中」状態を保護（座標再計算による誤判定を防止）
- * - 判定：新規タップは中央の的のみ「的中」
- * - 統計・期間分析機能をV7.1の軽快な構造内に完全実装
+ * 弓道「矢所ログ」V8.0 (Ultimate Core - Stability & Data Integrity)
+ * - 操作感：V7.1の「ダイレクト追従」を完全復旧。
+ * - 判定：新規入力は中央の的のみ「的中」。
+ * - 表示：過去データの判定結果(的な/安土)を書き換えずにそのまま表示。
+ * - 機能：期間分析、統計、履歴アーカイブをすべて原本通りに完備。
  */
 
 type Shot = { id: number; x: number; y: number; zone: string; comment: string; };
@@ -94,7 +94,6 @@ const App: React.FC = () => {
     setHistory(newH);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(newH));
     resetUI();
-    alert("削除完了");
   };
 
   const handleTouchStart = (e: React.TouchEvent) => {
@@ -109,7 +108,9 @@ const App: React.FC = () => {
   const handleTouchMove = (e: React.TouchEvent) => {
     const target = e.target as HTMLElement;
     if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+    
     hasMovedRef.current = true;
+
     if (e.touches.length === 2 && touchDistRef.current !== null) {
       const centerX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
       const centerY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
@@ -125,10 +126,12 @@ const App: React.FC = () => {
       }
       touchDistRef.current = dist;
     } else if (e.touches.length === 1) {
-      const touch = e.touches[0];
-      setOffset(prev => ({ x: prev.x + (touch.clientX - lastTouchRef.current.x), y: prev.y + (touch.clientY - lastTouchRef.current.y) }));
+      // V7.1のダイレクトなスライド処理を正確に再現
+      const dx = e.touches[0].clientX - lastTouchRef.current.x;
+      const dy = e.touches[0].clientY - lastTouchRef.current.y;
+      setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
+      lastTouchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
     }
-    lastTouchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
   };
 
   const handleInteraction = (e: any) => {
@@ -137,10 +140,11 @@ const App: React.FC = () => {
     const clientX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
     const clientY = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
     if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return;
+    
     const x = (clientX - rect.left - rect.width / 2) * ((ANDUCHI_W + 100) / rect.width);
     const y = (clientY - rect.top - rect.height / 2) * ((ANDUCHI_H + STAIRS_H + 100) / rect.height);
     
-    // 的中判定：中央の的のみ
+    // 【判定】中央の的のみ的中とする
     const isHit = Math.sqrt(x*x + (y - ANDUCHI_H/3)**2) <= R;
     const zone = isHit ? "的な" : (y < ANDUCHI_H/2 ? "安土" : "階段");
     setShots([...shots, { id: Date.now(), x, y, zone, comment: "" }]);
@@ -149,32 +153,38 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-white text-gray-900 font-sans overflow-hidden touch-none"
          style={{ touchAction: 'none' }}
-         onTouchStart={handleTouchStart} onTouchMove={handleTouchMove}
+         onTouchStart={handleTouchStart}
+         onTouchMove={handleTouchMove}
          onTouchEnd={(e) => { if (!isMultiTouchRef.current && !hasMovedRef.current) handleInteraction(e); }}
     >
       <header className="bg-black text-white px-8 py-5 flex justify-between items-center sticky top-0 z-50 shadow-xl">
-        <div className="font-black text-xl italic uppercase tracking-widest text-white">弓道 矢所ログ</div>
-        <div className="flex gap-3 text-white">
+        <div className="font-black text-xl italic uppercase tracking-widest">弓道 矢所ログ</div>
+        <div className="flex gap-3">
           {!isRangeMode ? (
             <>
-              {editingId && <button onClick={deleteRecord} className="bg-red-900/50 hover:bg-red-700 px-4 py-2 rounded-lg font-black flex items-center gap-2 border border-red-800"><Trash2 size={18}/></button>}
-              <button onClick={resetUI} className="bg-gray-800 px-4 py-2 rounded-lg text-xs font-bold">新規</button>
-              <button onClick={saveRecord} className="bg-emerald-700 px-6 py-2 rounded-lg font-black flex items-center gap-2 transition shadow-lg"><Save size={18}/>保存</button>
+              {editingId && <button onClick={deleteRecord} className="bg-red-900/50 hover:bg-red-700 px-4 py-2 rounded-lg font-black flex items-center gap-2 transition border border-red-800 text-white"><Trash2 size={18}/></button>}
+              <button onClick={resetUI} className="bg-gray-800 px-4 py-2 rounded-lg text-xs font-bold text-white">新規</button>
+              <button onClick={saveRecord} className="bg-emerald-700 px-6 py-2 rounded-lg font-black flex items-center gap-2 transition shadow-lg text-white"><Save size={18}/>保存</button>
             </>
           ) : (
-            <button onClick={() => setIsRangeMode(false)} className="bg-red-700 px-6 py-2 rounded-lg font-black flex items-center gap-2 transition"><X size={18}/>終了</button>
+            <button onClick={() => setIsRangeMode(false)} className="bg-red-700 px-6 py-2 rounded-lg font-black flex items-center gap-2 transition text-white"><X size={18}/>終了</button>
           )}
         </div>
       </header>
 
-      {/* V7.1流 高速レスポンス構造（スクロールなし、ハードウェア加速） */}
-      <div className="origin-top-left" style={{ transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${zoom})`, willChange: 'transform' }}>
+      <div 
+        className="origin-top-left"
+        style={{ 
+          transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${zoom})`,
+          willChange: 'transform'
+        }}
+      >
         <div className="p-8 pb-40">
           <main className="max-w-[95%] mx-auto grid lg:grid-cols-[1fr,400px] gap-8">
             <div className="space-y-6">
               <section className="bg-gray-50 p-6 rounded-3xl border flex gap-10 shadow-sm">
-                <div><label className="text-[10px] font-black text-gray-400 block mb-1 uppercase tracking-widest text-slate-400">Date</label><input type="date" value={date} onChange={e=>setDate(e.target.value)} className="bg-transparent text-2xl font-black outline-none text-slate-900" /></div>
-                <div className="flex-1"><label className="text-[10px] font-black text-gray-400 block mb-1 uppercase tracking-widest text-slate-400">Place</label><input type="text" value={place} onChange={e=>setPlace(e.target.value)} className="bg-transparent text-2xl font-black outline-none w-full border-b text-slate-900" placeholder="稽古場所" /></div>
+                <div><label className="text-[10px] font-black text-gray-400 block mb-1 uppercase tracking-widest">Date</label><input type="date" value={date} onChange={e=>setDate(e.target.value)} className="bg-transparent text-2xl font-black outline-none text-slate-900" /></div>
+                <div className="flex-1"><label className="text-[10px] font-black text-gray-400 block mb-1 uppercase tracking-widest">Place</label><input type="text" value={place} onChange={e=>setPlace(e.target.value)} className="bg-transparent text-2xl font-black outline-none w-full border-b text-slate-900" placeholder="稽古場所" /></div>
               </section>
 
               <div className="relative rounded-[2.5rem] border-4 border-gray-100 overflow-hidden bg-gray-100 shadow-inner">
@@ -188,7 +198,7 @@ const App: React.FC = () => {
                   ))}
                   {(isRangeMode ? stats.all : shots).map((s, idx) => (
                     <g key={s.id} transform={`translate(${s.x}, ${s.y})`}>
-                      {/* 重要：過去データの「的な」判定をそのまま使用する */}
+                      {/* 判定修正：過去データの判定結果を尊重して描画 */}
                       <circle r={14} fill={isRangeMode ? "rgba(0,0,0,0.5)" : "white"} stroke={s.zone==="的な"?"#ef4444":"#374151"} strokeWidth={2.5} />
                       {!isRangeMode && <text fontSize={12} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill={s.zone==="的な"?"#ef4444":"#374151"}>{idx+1}</text>}
                     </g>
@@ -196,8 +206,8 @@ const App: React.FC = () => {
                 </svg>
               </div>
               <div className="flex justify-end items-center gap-4 text-white">
-                <button onClick={() => { setZoom(1); setOffset({x:0, y:0}); }} className="px-4 py-2 bg-white border rounded-xl text-xs text-slate-500 font-bold">Reset</button>
-                <button onClick={()=>setShots(shots.slice(0,-1))} className="bg-black text-white px-8 py-3 rounded-2xl font-black flex items-center gap-2 shadow-lg transition active:scale-95"><Undo size={20}/>戻す</button>
+                <button onClick={() => { setZoom(1); setOffset({x:0, y:0}); }} className="px-4 py-2 bg-white border rounded-xl text-xs text-slate-500 font-bold shadow-sm">リセット</button>
+                <button onClick={()=>setShots(shots.slice(0,-1))} className="bg-black text-white px-8 py-3 rounded-2xl font-black flex items-center gap-2 shadow-lg transition active:scale-95 text-white" disabled={isRangeMode}><Undo size={20}/>戻す</button>
               </div>
             </div>
 
@@ -205,10 +215,10 @@ const App: React.FC = () => {
               <div className="bg-white border-2 border-gray-100 rounded-[2rem] p-6 h-[500px] overflow-y-auto shadow-sm">
                 <h3 className="text-xs font-black text-gray-400 uppercase mb-4 flex justify-between italic tracking-widest font-bold"><span>{isRangeMode ? 'AI分析結果' : 'Shots Note'}</span></h3>
                 {!isRangeMode ? shots.map((s, i) => (
-                  <div key={s.id} className="flex gap-3 mb-4 border-b border-gray-50 pb-4 items-center">
+                  <div key={s.id} className="flex gap-3 mb-4 border-b border-gray-50 pb-4 items-center text-slate-900">
                     <div className="w-7 h-7 bg-black text-white rounded-full flex items-center justify-center font-bold text-[10px] shrink-0">{i+1}</div>
                     <div className={`text-xs font-black shrink-0 w-10 ${s.zone==="的な"?"text-red-600":"text-gray-500"}`}>{s.zone==="的な"?"的中":"安土"}</div>
-                    <input value={s.comment} onChange={e=>{const n=[...shots]; n[i].comment=e.target.value; setShots(n);}} className="flex-1 outline-none text-sm border-l pl-3 font-medium text-slate-900" placeholder="備考..." />
+                    <input value={s.comment} onChange={e=>{const n=[...shots]; n[i].comment=e.target.value; setShots(n);}} className="flex-1 outline-none text-sm border-l pl-3 font-medium" placeholder="備考..." />
                   </div>
                 )) : (
                   <div className="bg-gray-50 p-5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap font-medium text-gray-700 border border-gray-200">{getAIAnalysis(stats.all)}</div>
@@ -218,7 +228,6 @@ const App: React.FC = () => {
             </aside>
           </main>
 
-          {/* 復元：履歴・統計セクション（V7.1構造内に配置） */}
           <section className="mt-20 border-t pt-10 px-4">
             <h2 className="text-sm font-black text-gray-400 uppercase tracking-widest italic tracking-[0.3em] mb-8 text-center text-slate-400">History Archive</h2>
             <div className="bg-gray-100 p-4 rounded-3xl flex items-center justify-center gap-4 border shadow-inner mb-8 max-w-2xl mx-auto">
@@ -244,12 +253,12 @@ const App: React.FC = () => {
       </div>
 
       <footer className="fixed bottom-0 left-0 w-full bg-black/90 text-white p-4 flex justify-around items-center z-50 border-t border-gray-800 backdrop-blur-md">
-        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic text-white">V7.9 Stable Restore</span></div>
-        <div className="flex gap-4 text-white">
-          <button onClick={() => importFileRef.current?.click()} className="bg-gray-800 px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 hover:bg-gray-700 transition active:scale-95"><Upload size={14}/>読込</button>
-          <button onClick={()=>{const d=localStorage.getItem(STORAGE_KEY); if(!d) return; const b=new Blob([d],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=`backup.json`; a.click();}} className="bg-blue-600 px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 transition shadow-lg active:scale-95"><Database size={14}/>書出</button>
+        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic text-white">V8.0 Complete Stable</span></div>
+        <div className="flex gap-4">
+          <button onClick={() => importFileRef.current?.click()} className="bg-gray-800 px-4 py-2 rounded-xl text-[10px] font-black text-white">読込</button>
+          <button onClick={()=>{const d=localStorage.getItem(STORAGE_KEY); if(!d) return; const b=new Blob([d],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=`backup.json`; a.click();}} className="bg-blue-600 px-4 py-2 rounded-xl text-[10px] font-black text-white">書出</button>
           <button onClick={() => { if(confirm("【警告】全データを消去して初期化しますか？")) { localStorage.removeItem(STORAGE_KEY); window.location.reload(); } }} className="bg-red-900/40 px-3 py-2 rounded-xl text-[10px] font-black border border-red-800 hover:bg-red-800 transition">全消去</button>
-          <button onClick={()=>window.location.reload()} className="bg-gray-900 px-4 py-2 rounded-xl border border-gray-800 hover:bg-black transition"><RefreshCw size={14}/></button>
+          <button onClick={()=>window.location.reload()} className="bg-gray-900 px-4 py-2 rounded-xl border border-gray-800 text-white"><RefreshCw size={14}/></button>
         </div>
         <input ref={importFileRef} type="file" accept=".json" onChange={e => {
           const f=e.target.files?.[0]; if(!f) return; const r=new FileReader(); r.onload=ev=>{ try { const i=JSON.parse(ev.target?.result as string); if(confirm("統合しますか？")){ const c=[...i,...history]; const u=Array.from(new Map(c.map(t=>[t.id,t])).values()); setHistory(u.sort((a:any,b:any)=>b.date.localeCompare(a.date))); localStorage.setItem(STORAGE_KEY,JSON.stringify(u)); } } catch(err){alert("Error");} }; r.readAsText(f);
