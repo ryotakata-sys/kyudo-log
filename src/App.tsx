@@ -2,11 +2,11 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Undo, Save, Calendar, Database, Upload, RefreshCw, BarChart2, X, Trash2 } from "lucide-react";
 
 /**
- * 弓道「矢所ログ」V6.9 (V5.3ベース - 最適化版)
- * - V5.3のデザイン・構造を完全維持
- * - 慣性スクロール(Momentum)搭載：スーッと動く心地よさ
- * - 制限を排除した自由移動 + ダブルタップリセット(安全装置)
- * - iPadOSのブラウザバウンスを抑制し、操作のひっかかりを解消
+ * 弓道「矢所ログ」V7.0 (Unified Core - Final Build)
+ * - エラーを解消し、保存・削除・読込ロジックを完全復元。
+ * - V5.3のピボットズーム ＋ V5.4の堅牢なビューポート管理。
+ * - 制限のない自由移動 ＋ iOSライクな慣性スクロール。
+ * - ダブルタップで原点復帰（迷子防止機能）。
  */
 
 type Shot = { id: number; x: number; y: number; zone: string; comment: string; };
@@ -42,62 +42,56 @@ const App: React.FC = () => {
   const [note, setNote] = useState("");
   const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
-  
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
-
   const [isRangeMode, setIsRangeMode] = useState(false);
   const [startDate, setStartDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split("T")[0]);
   const [endDate, setEndDate] = useState(new Date().toISOString().split("T")[0]);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
-  
-  const touchDistRef = useRef<number | null>(null);
   const lastTouchRef = useRef({ x: 0, y: 0 });
-  const velocityRef = useRef({ x: 0, y: 0 }); 
-  const requestRef = useRef<number>(); 
+  const touchDistRef = useRef<number | null>(null);
+  const velocityRef = useRef({ x: 0, y: 0 });
+  const requestRef = useRef<number>();
   const lastTapRef = useRef<number>(0);
   const hasMovedRef = useRef(false);
   const isMultiTouchRef = useRef(false);
 
-  // iPadパッチ：ブラウザのバウンス（戻される挙動）を防止
+  // iPadパッチ：ブラウザの干渉を防止
   useEffect(() => {
     const preventDefault = (e: TouchEvent) => {
-      if (zoom > 1.01 || e.touches.length > 1) {
-        if (e.cancelable) e.preventDefault();
-      }
+      if (e.cancelable) e.preventDefault();
     };
     document.addEventListener("touchmove", preventDefault, { passive: false });
     return () => document.removeEventListener("touchmove", preventDefault);
-  }, [zoom]);
+  }, []);
 
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) setHistory(JSON.parse(saved).sort((a: any, b: any) => b.date.localeCompare(a.date)));
   }, []);
 
-  const filteredHistory = useMemo(() => isRangeMode ? history.filter(h => h.date >= startDate && h.date <= endDate) : history, [history, isRangeMode, startDate, endDate]);
-
   const stats = useMemo(() => {
-    const all = filteredHistory.flatMap(h => h.shots);
+    const filtered = isRangeMode ? history.filter(h => h.date >= startDate && h.date <= endDate) : history;
+    const all = filtered.flatMap(h => h.shots);
     const hits = all.filter(s => s.zone === "的な").length;
-    return { total: all.length, hits, rate: all.length > 0 ? ((hits / all.length) * 100).toFixed(1) : "0.0", all };
-  }, [filteredHistory]);
+    return { total: all.length, hits, rate: all.length > 0 ? ((hits / all.length) * 100).toFixed(1) : "0.0", all, filtered };
+  }, [history, isRangeMode, startDate, endDate]);
 
   const resetUI = () => { setEditingId(null); setShots([]); setPlace(""); setNote(""); setZoom(1); setOffset({ x: 0, y: 0 }); };
 
+  // --- 復元したロジック ---
   const saveRecord = () => {
     const newId = editingId || Date.now();
-    const newH = editingId ? history.map(h => h.id === editingId ? { ...h, date, place, note, shots } : h) : [{ id: newId, date, place, note, shots }, ...history];
-    setHistory([...newH].sort((a, b) => b.date.localeCompare(a.date)));
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(newH));
+    const newH = editingId 
+      ? history.map(h => h.id === editingId ? { ...h, date, place, note, shots } : h) 
+      : [{ id: newId, date, place, note, shots }, ...history];
+    const sortedH = [...newH].sort((a, b) => b.date.localeCompare(a.date));
+    setHistory(sortedH);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(sortedH));
     setEditingId(newId);
     alert("保存完了");
-  };
-
-  const loadHistory = (h: HistoryRecord) => {
-    setIsRangeMode(false); setEditingId(h.id); setDate(h.date); setPlace(h.place); setNote(h.note); setShots(h.shots); setZoom(1); setOffset({x:0, y:0});
   };
 
   const deleteRecord = () => {
@@ -109,15 +103,24 @@ const App: React.FC = () => {
     alert("削除完了");
   };
 
+  const loadHistory = (h: HistoryRecord) => {
+    setIsRangeMode(false); 
+    setEditingId(h.id); 
+    setDate(h.date); 
+    setPlace(h.place); 
+    setNote(h.note); 
+    setShots(h.shots); 
+    setZoom(1); 
+    setOffset({ x: 0, y: 0 });
+  };
+  // ----------------------
+
   const handleTouchStart = (e: React.TouchEvent) => {
     if (requestRef.current) cancelAnimationFrame(requestRef.current);
     
-    // ダブルタップ検知（安全装置：中央に戻る）
     const now = Date.now();
-    if (now - lastTapRef.current < 300) {
-      setZoom(1);
-      setOffset({ x: 0, y: 0 });
-      return;
+    if (now - lastTapRef.current < 300 && e.touches.length === 1) {
+      setZoom(1); setOffset({ x: 0, y: 0 }); return;
     }
     lastTapRef.current = now;
 
@@ -132,7 +135,7 @@ const App: React.FC = () => {
 
   const handleTouchMove = (e: React.TouchEvent) => {
     const target = e.target as HTMLElement;
-    if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+    if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.closest('.history-scroll')) return;
 
     if (e.touches.length === 2 && touchDistRef.current !== null) {
       hasMovedRef.current = true;
@@ -142,20 +145,16 @@ const App: React.FC = () => {
       const delta = dist / touchDistRef.current;
       const nextZoom = Math.min(Math.max(zoom * delta, 0.8), 5);
       
-      if (nextZoom !== zoom) {
-        setOffset(prev => ({
-          x: centerX - (centerX - prev.x) * (nextZoom / zoom),
-          y: centerY - (centerY - prev.y) * (nextZoom / zoom)
-        }));
-        setZoom(nextZoom);
-      }
+      setOffset(prev => ({
+        x: centerX - (centerX - prev.x) * (nextZoom / zoom),
+        y: centerY - (centerY - prev.y) * (nextZoom / zoom)
+      }));
+      setZoom(nextZoom);
       touchDistRef.current = dist;
     } else if (e.touches.length === 1) {
       hasMovedRef.current = true;
-      const touch = e.touches[0];
-      const dx = touch.clientX - lastTouchRef.current.x;
-      const dy = touch.clientY - lastTouchRef.current.y;
-      
+      const dx = e.touches[0].clientX - lastTouchRef.current.x;
+      const dy = e.touches[0].clientY - lastTouchRef.current.y;
       velocityRef.current = { x: dx, y: dy };
       setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
     }
@@ -163,8 +162,8 @@ const App: React.FC = () => {
   };
 
   const animateGlide = () => {
-    velocityRef.current.x *= 0.96; // 摩擦：滑らかに止まる
-    velocityRef.current.y *= 0.96;
+    velocityRef.current.x *= 0.95;
+    velocityRef.current.y *= 0.95;
     setOffset(prev => {
       if (Math.abs(velocityRef.current.x) < 0.1 && Math.abs(velocityRef.current.y) < 0.1) return prev;
       requestRef.current = requestAnimationFrame(animateGlide);
@@ -175,9 +174,10 @@ const App: React.FC = () => {
   const handleTouchEnd = (e: React.TouchEvent) => {
     if (!isMultiTouchRef.current && !hasMovedRef.current) {
       handleInteraction(e);
-    } else if (!isMultiTouchRef.current && hasMovedRef.current) {
+    } else if (hasMovedRef.current && zoom > 1.0) {
       requestRef.current = requestAnimationFrame(animateGlide);
     }
+    if (zoom < 1.05) { setZoom(1); setOffset({ x: 0, y: 0 }); }
   };
 
   const handleInteraction = (e: any) => {
@@ -193,45 +193,39 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-white text-gray-900 font-sans overflow-hidden touch-none"
-         style={{ touchAction: 'none', overscrollBehavior: 'none' }}
-         onTouchStart={handleTouchStart}
-         onTouchMove={handleTouchMove}
-         onTouchEnd={handleTouchEnd}
-    >
-      <header className="bg-black text-white px-8 py-5 flex justify-between items-center sticky top-0 z-50 shadow-xl">
-        <div className="font-black text-xl italic uppercase tracking-widest text-white">弓道 矢所ログ</div>
-        <div className="flex gap-3 text-white font-bold">
+    <div className="flex flex-col h-screen bg-white text-gray-900 font-sans overflow-hidden touch-none"
+         onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
+      
+      <header className="bg-black text-white px-6 py-4 flex justify-between items-center z-50 shadow-2xl">
+        <div className="font-black text-xl italic uppercase tracking-tighter">弓道 矢所ログ</div>
+        <div className="flex gap-2">
           {!isRangeMode ? (
             <>
-              {editingId && <button onClick={deleteRecord} className="bg-red-900/50 hover:bg-red-700 px-4 py-2 rounded-lg flex items-center gap-2 transition border border-red-800"><Trash2 size={18}/>削除</button>}
-              <button onClick={resetUI} className="bg-gray-800 px-4 py-2 rounded-lg text-xs">新規</button>
-              <button onClick={saveRecord} className="bg-emerald-700 px-6 py-2 rounded-lg flex items-center gap-2 transition shadow-lg"><Save size={18}/>保存</button>
+              {editingId && <button onClick={deleteRecord} className="bg-red-900/50 px-3 py-1.5 rounded-lg text-xs font-black border border-red-800 text-white"><Trash2 size={14}/></button>}
+              <button onClick={resetUI} className="bg-gray-800 px-3 py-1.5 rounded-lg text-xs font-bold text-white">新規</button>
+              <button onClick={saveRecord} className="bg-emerald-700 px-4 py-1.5 rounded-lg text-sm font-black flex items-center gap-2 text-white"><Save size={16}/>保存</button>
             </>
           ) : (
-            <button onClick={() => setIsRangeMode(false)} className="bg-red-700 px-6 py-2 rounded-lg flex items-center gap-2 transition"><X size={18}/>終了</button>
+            <button onClick={() => setIsRangeMode(false)} className="bg-red-700 px-4 py-1.5 rounded-lg text-sm font-black flex items-center gap-2 text-white"><X size={16}/>終了</button>
           )}
         </div>
       </header>
 
-      <div 
-        className="origin-top-left"
-        style={{ 
-          transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${zoom})`,
-          willChange: 'transform' // ハードウェア加速
-        }}
-      >
-        <div className="p-8 pb-40">
-          <main className="max-w-[95%] mx-auto grid lg:grid-cols-[1fr,400px] gap-8">
-            <div className="space-y-6">
-              <section className="bg-gray-50 p-6 rounded-3xl border flex gap-10 shadow-sm">
-                <div><label className="text-[10px] font-black text-gray-400 block mb-1 uppercase tracking-widest">Date</label><input type="date" value={date} onChange={e=>setDate(e.target.value)} className="bg-transparent text-2xl font-black outline-none" /></div>
-                <div className="flex-1"><label className="text-[10px] font-black text-gray-400 block mb-1 uppercase tracking-widest">Place</label><input type="text" value={place} onChange={e=>setPlace(e.target.value)} className="bg-transparent text-2xl font-black outline-none w-full border-b" placeholder="稽古場所" /></div>
-              </section>
+      <div className="flex-1 overflow-y-auto bg-gray-50 history-scroll">
+        <div 
+          className="origin-top-left will-change-transform"
+          style={{ transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${zoom})` }}
+        >
+          <div className="p-4 md:p-8 pb-40">
+            <main className="max-w-[1200px] mx-auto grid lg:grid-cols-[1fr,380px] gap-6">
+              <div className="space-y-6">
+                <section className="bg-white p-6 rounded-3xl border shadow-sm flex gap-6">
+                  <div className="flex-1"><label className="text-[10px] font-black text-gray-400 block mb-1 uppercase">Date</label><input type="date" value={date} onChange={e=>setDate(e.target.value)} className="bg-transparent text-xl font-black outline-none w-full" /></div>
+                  <div className="flex-[1.5]"><label className="text-[10px] font-black text-gray-400 block mb-1 uppercase">Place</label><input type="text" value={place} onChange={e=>setPlace(e.target.value)} className="bg-transparent text-xl font-black outline-none w-full border-b-2 border-gray-100 focus:border-black transition-colors" placeholder="稽古場所" /></div>
+                </section>
 
-              <div className="relative rounded-[2.5rem] border-4 border-gray-100 overflow-hidden bg-gray-100 shadow-inner">
-                <div className="w-full h-full select-none">
-                  <svg ref={svgRef} viewBox={`-${(ANDUCHI_W+100)/2} -${(ANDUCHI_H+STAIRS_H+100)/2} ${ANDUCHI_W+100} ${ANDUCHI_H+STAIRS_H+100}`} className="w-full h-auto cursor-crosshair">
+                <div className="relative rounded-[2.5rem] border-[6px] border-white overflow-hidden bg-gray-200 shadow-2xl aspect-[4/3] lg:aspect-auto">
+                  <svg ref={svgRef} viewBox={`-${(ANDUCHI_W+100)/2} -${(ANDUCHI_H+STAIRS_H+100)/2} ${ANDUCHI_W+100} ${ANDUCHI_H+STAIRS_H+100}`} className="w-full h-full cursor-crosshair">
                     <rect x={-ANDUCHI_W/2} y={-ANDUCHI_H/2} width={ANDUCHI_W} height={ANDUCHI_H} fill="#d2b48c" />
                     <rect x={-ANDUCHI_W/2} y={ANDUCHI_H/2} width={ANDUCHI_W} height={STAIRS_H} fill="#4a634a" />
                     {[-TARGET_SPACING, 0, TARGET_SPACING].map(ox => (
@@ -241,71 +235,74 @@ const App: React.FC = () => {
                     ))}
                     {(isRangeMode ? stats.all : shots).map((s, idx) => (
                       <g key={s.id} transform={`translate(${s.x}, ${s.y})`}>
-                        <circle r={isRangeMode ? 10/zoom : 15} fill={isRangeMode ? "rgba(0,0,0,0.5)" : "white"} stroke={s.zone==="的な"?"#ef4444":"#374151"} strokeWidth={2} />
-                        {!isRangeMode && <text fontSize={12} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill={s.zone==="的な"?"#ef4444":"#374151"}>{idx+1}</text>}
+                        <circle r={isRangeMode ? 8 : 14} fill={isRangeMode ? "rgba(0,0,0,0.4)" : "white"} stroke={s.zone==="的な"?"#ef4444":"#374151"} strokeWidth={2.5} />
+                        {!isRangeMode && <text fontSize={11} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill={s.zone==="的な"?"#ef4444":"#374151"}>{idx+1}</text>}
                       </g>
                     ))}
                   </svg>
                 </div>
-              </div>
-              <div className="flex justify-end items-center gap-4">
-                <span className="text-[10px] font-black text-gray-300 uppercase italic tracking-widest">Zoom: {zoom.toFixed(1)}x</span>
-                <button onClick={() => { setZoom(1); setOffset({x:0, y:0}); }} className="text-[10px] font-black text-gray-400 border border-gray-200 px-3 py-1 rounded-full active:bg-gray-100 transition shadow-sm font-bold">リセット</button>
-                <button onClick={()=>setShots(shots.slice(0,-1))} className="bg-black text-white px-8 py-3 rounded-2xl font-black flex items-center gap-2 shadow-lg transition active:scale-95" disabled={isRangeMode}><Undo size={20}/>戻す</button>
-              </div>
-            </div>
-
-            <aside className="space-y-6">
-              <div className="bg-white border-2 border-gray-100 rounded-[2rem] p-6 h-[500px] overflow-y-auto shadow-sm">
-                <h3 className="text-xs font-black text-gray-400 uppercase mb-4 flex justify-between italic tracking-widest font-bold text-slate-400"><span>{isRangeMode ? 'AI分析結果' : 'Shots Note'}</span><span>{isRangeMode ? '' : '判定 | 備考'}</span></h3>
-                {!isRangeMode ? shots.map((s, i) => (
-                  <div key={s.id} className="flex gap-3 mb-4 border-b border-gray-50 pb-4 items-center">
-                    <div className="w-7 h-7 bg-black text-white rounded-full flex items-center justify-center font-bold text-[10px] shrink-0">{i+1}</div>
-                    <div className={`text-xs font-black shrink-0 w-10 ${s.zone==="的な"?"text-red-600":"text-gray-500"}`}>{s.zone==="的な"?"的中":"安土"}</div>
-                    <input value={s.comment} onChange={e=>{const n=[...shots]; n[i].comment=e.target.value; setShots(n);}} className="flex-1 outline-none text-sm border-l pl-3 font-medium text-slate-800" placeholder="備考..." />
+                
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] font-black text-gray-400 italic">Zoom: {zoom.toFixed(2)}x</span>
+                  <div className="flex gap-3">
+                    <button onClick={() => { setZoom(1); setOffset({x:0, y:0}); }} className="px-4 py-2 bg-white border rounded-xl text-xs font-bold shadow-sm active:bg-gray-100">Reset</button>
+                    <button onClick={()=>setShots(shots.slice(0,-1))} className="bg-black text-white px-8 py-2 rounded-xl font-black shadow-lg flex items-center gap-2 active:scale-95 text-white" disabled={isRangeMode}><Undo size={18}/>1手戻す</button>
                   </div>
-                )) : (
-                  <div className="bg-gray-50 p-5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap font-medium text-gray-700 border border-gray-200">{getAIAnalysis(stats.all)}</div>
-                )}
+                </div>
               </div>
-              <textarea value={note} onChange={e=>setNote(e.target.value)} className="w-full bg-gray-50 border border-gray-100 rounded-[2rem] p-6 h-32 outline-none text-sm resize-none shadow-inner text-slate-800 font-bold" placeholder="全体まとめ..." />
-            </aside>
-          </main>
 
-          <section className="mt-20 border-t pt-10 px-4">
-            <h2 className="text-sm font-black text-gray-400 uppercase tracking-widest italic tracking-[0.3em] mb-8 text-center">History Archive</h2>
-            <div className="bg-gray-100 p-4 rounded-3xl flex items-center justify-center gap-4 border shadow-inner mb-8 max-w-2xl mx-auto">
-               <Calendar size={14} className="text-gray-400"/><input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} className="bg-transparent text-[10px] font-bold outline-none" />
-               <span className="text-gray-300">〜</span><input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} className="bg-transparent text-[10px] font-bold outline-none" />
-               <button onClick={() => setIsRangeMode(true)} className="bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 transition hover:bg-gray-800 shadow-md"><BarChart2 size={14}/>期間分析</button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
-              <div className="p-6 rounded-3xl border text-center bg-gray-50 shadow-sm"><span className="text-[10px] font-black text-gray-400 block mb-1 italic">Total</span><span className="text-4xl font-black text-slate-800">{stats.total}</span></div>
-              <div className="p-6 rounded-3xl border text-center bg-emerald-50 border-emerald-100 shadow-sm"><span className="text-[10px] font-black text-gray-400 block mb-1 text-emerald-600 italic">Hits</span><span className="text-4xl font-black text-emerald-600">{stats.hits}</span></div>
-              <div className="p-6 rounded-3xl border text-center bg-blue-50 border-blue-100 shadow-sm"><span className="text-[10px] font-black text-gray-400 block mb-1 text-blue-700 italic">Rate</span><span className="text-4xl font-black text-blue-700">{stats.rate}%</span></div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              {filteredHistory.map(h => (
-                <button key={h.id} onClick={()=>loadHistory(h)} className={`p-6 rounded-[2rem] border-4 text-left transition-all ${editingId===h.id ? "bg-black text-white border-black shadow-2xl scale-105" : "bg-white border-gray-100 hover:border-gray-200 shadow-sm"}`}>
-                  <div className="text-xs font-mono mb-2 opacity-60">{h.date}</div><div className="font-black truncate text-lg italic uppercase">{h.place || "PRACTICE"}</div>
-                  <div className="mt-4 text-[10px] border-t pt-2 flex justify-between opacity-80 font-bold uppercase"><span>{h.shots.length} Shots</span><span className={editingId===h.id ? 'text-emerald-400' : 'text-emerald-600'}>Hits {h.shots.filter(s=>s.zone==="的な").length}</span></div>
-                </button>
-              ))}
-            </div>
-          </section>
+              <aside className="space-y-6">
+                <div className="bg-white border rounded-[2rem] p-6 h-[450px] overflow-y-auto shadow-sm history-scroll">
+                  <h3 className="text-xs font-black text-gray-400 uppercase mb-4 flex justify-between tracking-widest"><span>{isRangeMode ? 'AI Analysis' : 'Shots Log'}</span></h3>
+                  {!isRangeMode ? shots.map((s, i) => (
+                    <div key={s.id} className="flex gap-3 mb-3 border-b border-gray-50 pb-3 items-center">
+                      <div className="w-6 h-6 bg-black text-white rounded-full flex items-center justify-center font-bold text-[9px]">{i+1}</div>
+                      <div className={`text-[10px] font-black w-8 ${s.zone==="的な"?"text-red-600":"text-gray-400"}`}>{s.zone==="的な"?"的中":"安土"}</div>
+                      <input value={s.comment} onChange={e=>{const n=[...shots]; n[i].comment=e.target.value; setShots(n);}} className="flex-1 text-sm font-medium outline-none border-l pl-2 text-slate-900" placeholder="..." />
+                    </div>
+                  )) : (
+                    <div className="text-sm leading-relaxed whitespace-pre-wrap font-medium text-gray-700">{getAIAnalysis(stats.all)}</div>
+                  )}
+                </div>
+                <textarea value={note} onChange={e=>setNote(e.target.value)} className="w-full bg-white border rounded-[2rem] p-6 h-32 outline-none text-sm shadow-sm text-slate-800 font-bold" placeholder="全体メモ・気づき..." />
+              </aside>
+            </main>
+
+            <section className="mt-20 max-w-[1200px] mx-auto border-t pt-10 px-4">
+              <h2 className="text-xs font-black text-gray-400 uppercase tracking-[0.4em] mb-8 text-center">History Archive</h2>
+              <div className="bg-white p-4 rounded-3xl border shadow-sm flex items-center justify-center gap-4 mb-10 max-w-lg mx-auto">
+                 <Calendar size={14} className="text-gray-400"/><input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} className="bg-transparent text-xs font-bold outline-none" />
+                 <span className="text-gray-300">~</span><input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} className="bg-transparent text-xs font-bold outline-none" />
+                 <button onClick={() => setIsRangeMode(true)} className="bg-black text-white px-4 py-2 rounded-xl text-xs font-black uppercase flex items-center gap-2 text-white"><BarChart2 size={14}/>分析</button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+                <div className="p-6 rounded-3xl bg-white border shadow-sm text-center"><span className="text-[10px] font-black text-gray-400 block mb-1">Total</span><span className="text-4xl font-black text-slate-800">{stats.total}</span></div>
+                <div className="p-6 rounded-3xl bg-white border shadow-sm text-center"><span className="text-[10px] font-black text-emerald-500 block mb-1">Hits</span><span className="text-4xl font-black text-emerald-600">{stats.hits}</span></div>
+                <div className="p-6 rounded-3xl bg-white border shadow-sm text-center"><span className="text-[10px] font-black text-blue-500 block mb-1">Rate</span><span className="text-4xl font-black text-blue-700">{stats.rate}%</span></div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {stats.filtered.map(h => (
+                  <button key={h.id} onClick={()=>loadHistory(h)} className={`p-5 rounded-[1.8rem] border-2 text-left transition-all ${editingId===h.id ? "bg-black text-white border-black" : "bg-white border-gray-100 active:bg-gray-50 shadow-sm"}`}>
+                    <div className="text-[10px] font-mono opacity-50 mb-1">{h.date}</div><div className="font-black truncate text-sm uppercase">{h.place || "Practice"}</div>
+                    <div className="mt-3 text-[9px] border-t pt-2 flex justify-between font-bold"><span>{h.shots.length} Shots</span><span className="text-emerald-500">Hits {h.shots.filter(s=>s.zone==="的な").length}</span></div>
+                  </button>
+                ))}
+              </div>
+            </section>
+          </div>
         </div>
       </div>
 
-      <footer className="fixed bottom-0 left-0 w-full bg-black/90 text-white p-4 flex justify-around items-center z-50 border-t border-gray-800 backdrop-blur-md">
-        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic">V6.9 Boundary Lock</span></div>
-        <div className="flex gap-4">
-          <button onClick={() => importFileRef.current?.click()} className="bg-gray-800 px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 hover:bg-gray-700 transition active:scale-95"><Upload size={14}/>読込</button>
-          <button onClick={()=>{const d=localStorage.getItem(STORAGE_KEY); if(!d) return; const b=new Blob([d],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=`backup.json`; a.click();}} className="bg-blue-600 px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 transition shadow-lg active:scale-95"><Database size={14}/>書出</button>
-          <button onClick={() => { if(confirm("【警告】全データを消去して初期化しますか？")) { localStorage.removeItem(STORAGE_KEY); window.location.reload(); } }} className="bg-red-900/40 px-3 py-2 rounded-xl text-[10px] font-black border border-red-800 hover:bg-red-800 transition">全消去</button>
-          <button onClick={()=>window.location.reload()} className="bg-gray-900 px-4 py-2 rounded-xl border border-gray-800 hover:bg-black transition"><RefreshCw size={14}/></button>
+      <footer className="bg-black/95 text-white p-4 flex justify-around items-center border-t border-gray-800 backdrop-blur-xl">
+        <div className="flex items-center gap-2 opacity-50"><div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div><span className="text-[9px] font-mono uppercase tracking-tighter text-white">V7.0 Unified Core</span></div>
+        <div className="flex gap-2">
+          <button onClick={() => importFileRef.current?.click()} className="bg-gray-800 p-2 rounded-lg text-white"><Upload size={14}/></button>
+          <button onClick={()=>{const d=localStorage.getItem(STORAGE_KEY); if(!d) return; const b=new Blob([d],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=`backup.json`; a.click();}} className="bg-blue-700 p-2 rounded-lg shadow-lg text-white"><Database size={14}/></button>
+          <button onClick={() => { if(confirm("【警告】全データを消去しますか？")) { localStorage.removeItem(STORAGE_KEY); window.location.reload(); } }} className="bg-red-900/40 p-2 rounded-lg border border-red-800 text-[10px] font-bold text-white">全消去</button>
+          <button onClick={()=>window.location.reload()} className="bg-gray-900 p-2 rounded-lg border border-gray-800 text-white"><RefreshCw size={14}/></button>
         </div>
         <input ref={importFileRef} type="file" accept=".json" onChange={e => {
-          const f=e.target.files?.[0]; if(!f) return; const r=new FileReader(); r.onload=ev=>{ try { const i=JSON.parse(ev.target?.result as string); if(confirm("統合しますか？")){ const c=[...i,...history]; const u=Array.from(new Map(c.map(t=>[t.id,t])).values()); setHistory(u.sort((a:any,b:any)=>b.date.localeCompare(a.date))); localStorage.setItem(STORAGE_KEY,JSON.stringify(u)); } } catch(err){alert("Error");} }; r.readAsText(f);
+          const f=e.target.files?.[0]; if(!f) return; const r=new FileReader(); r.onload=ev=>{ try { const i=JSON.parse(ev.target?.result as string); if(confirm("データを統合しますか？")){ const c=[...i,...history]; const u=Array.from(new Map(c.map(t=>[t.id,t])).values()); setHistory(u.sort((a:any,b:any)=>b.date.localeCompare(a.date))); localStorage.setItem(STORAGE_KEY,JSON.stringify(u)); } } catch(err){alert("Error");} }; r.readAsText(f);
         }} className="hidden" />
       </footer>
     </div>
