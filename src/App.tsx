@@ -2,11 +2,11 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Undo, Save, Calendar, Database, Upload, RefreshCw, BarChart2, X, Trash2 } from "lucide-react";
 
 /**
- * 弓道「矢所ログ」V6.6 (Project Leader's Choice - 究極の操作感版)
- * - V5.3のデザインを完全維持。
- * - ダブルタップで等倍リセット機能を搭載。
- * - ズーム中のページスクロール干渉を完全に遮断し、操作のひっかかりを解消。
- * - 境界線計算を刷新し、画面紛失を100%防止。
+ * 弓道「矢所ログ」V6.7 (自由移動 + 慣性スクロール版)
+ * - 境界線制限をすべて撤廃。上下左右に自由にスライド可能。
+ * - 慣性スクロール(滑らかな余韻)を搭載し、もっさり感を解消。
+ * - ダブルタップで原点リセット。
+ * - デザインはV5.3を完全維持。
  */
 
 type Shot = { id: number; x: number; y: number; zone: string; comment: string; };
@@ -18,7 +18,7 @@ const ANDUCHI_W = TARGET_SPACING * 2 + R * 4;
 const ANDUCHI_H = 8.8 * R;
 const STAIRS_H = 3.0 * R;
 const STORAGE_KEY = "kyudo-log-history";
-const PAN_SENSITIVITY = 1.2; 
+const PAN_SENSITIVITY = 1.25; 
 
 const getAIAnalysis = (shots: Shot[]) => {
   if (shots.length === 0) return "データがありません。";
@@ -62,7 +62,7 @@ const App: React.FC = () => {
   const hasMovedRef = useRef(false);
   const isMultiTouchRef = useRef(false);
 
-  // iPadパッチ：ズーム中のページスクロール干渉を遮断
+  // iPadパッチ：ブラウザのバウンス干渉を抑制
   useEffect(() => {
     const preventDefault = (e: TouchEvent) => {
       if (zoom > 1.01 || e.touches.length > 1) {
@@ -110,16 +110,6 @@ const App: React.FC = () => {
     alert("削除完了");
   };
 
-  const applyBounds = (newX: number, newY: number, currentZoom: number) => {
-    if (currentZoom <= 1.0) return { x: 0, y: 0 };
-    const minX = window.innerWidth * (1 - currentZoom);
-    const minY = window.innerHeight * (1 - currentZoom);
-    return {
-      x: Math.max(minX, Math.min(0, newX)),
-      y: Math.max(minY, Math.min(0, newY))
-    };
-  };
-
   const handleTouchStart = (e: React.TouchEvent) => {
     if (requestRef.current) cancelAnimationFrame(requestRef.current);
     
@@ -151,49 +141,43 @@ const App: React.FC = () => {
       const centerY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
       const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
       const delta = dist / touchDistRef.current;
-      const nextZoom = Math.min(Math.max(zoom * delta, 1.0), 5);
+      const nextZoom = Math.min(Math.max(zoom * delta, 0.5), 5); // 自由な縮小も許可
       
       if (nextZoom !== zoom) {
-        setOffset(prev => applyBounds(
-          centerX - (centerX - prev.x) * (nextZoom / zoom),
-          centerY - (centerY - prev.y) * (nextZoom / zoom),
-          nextZoom
-        ));
+        setOffset(prev => ({
+          x: centerX - (centerX - prev.x) * (nextZoom / zoom),
+          y: centerY - (centerY - prev.y) * (nextZoom / zoom)
+        }));
         setZoom(nextZoom);
       }
       touchDistRef.current = dist;
-    } else if (e.touches.length === 1 && zoom > 1.0) {
+    } else if (e.touches.length === 1) {
       hasMovedRef.current = true;
       const touch = e.touches[0];
       const dx = (touch.clientX - lastTouchRef.current.x) * PAN_SENSITIVITY;
       const dy = (touch.clientY - lastTouchRef.current.y) * PAN_SENSITIVITY;
       
       velocityRef.current = { x: dx, y: dy };
-      setOffset(prev => applyBounds(prev.x + dx, prev.y + dy, zoom));
+      setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy })); // 境界制限なし
     }
     lastTouchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
   };
 
   const animateGlide = () => {
-    velocityRef.current.x *= 0.94;
+    velocityRef.current.x *= 0.94; // 摩擦
     velocityRef.current.y *= 0.94;
     setOffset(prev => {
-      const next = applyBounds(prev.x + velocityRef.current.x, prev.y + velocityRef.current.y, zoom);
       if (Math.abs(velocityRef.current.x) < 0.1 && Math.abs(velocityRef.current.y) < 0.1) return prev;
       requestRef.current = requestAnimationFrame(animateGlide);
-      return next;
+      return { x: prev.x + velocityRef.current.x, y: prev.y + velocityRef.current.y };
     });
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
     if (!isMultiTouchRef.current && !hasMovedRef.current) {
       handleInteraction(e);
-    } else if (!isMultiTouchRef.current && hasMovedRef.current && zoom > 1.0) {
+    } else if (!isMultiTouchRef.current && hasMovedRef.current) {
       requestRef.current = requestAnimationFrame(animateGlide);
-    }
-    if (zoom < 1.1) {
-      setZoom(1);
-      setOffset({ x: 0, y: 0 });
     }
   };
 
@@ -210,8 +194,8 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-white text-gray-900 font-sans overflow-x-hidden overflow-y-auto"
-         style={{ overscrollBehavior: 'none' }}
+    <div className="min-h-screen bg-white text-gray-900 font-sans overflow-hidden touch-none"
+         style={{ touchAction: 'none', overscrollBehavior: 'none' }}
          onTouchStart={handleTouchStart}
          onTouchMove={handleTouchMove}
          onTouchEnd={handleTouchEnd}
@@ -314,7 +298,7 @@ const App: React.FC = () => {
       </div>
 
       <footer className="fixed bottom-0 left-0 w-full bg-black/90 text-white p-4 flex justify-around items-center z-50 border-t border-gray-800 backdrop-blur-md">
-        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic">V6.6 Boundary Lock</span></div>
+        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic">V6.7 Boundary Lock</span></div>
         <div className="flex gap-4">
           <button onClick={() => importFileRef.current?.click()} className="bg-gray-800 px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 hover:bg-gray-700 transition active:scale-95 text-white"><Upload size={14}/>読込</button>
           <button onClick={()=>{const d=localStorage.getItem(STORAGE_KEY); if(!d) return; const b=new Blob([d],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=`backup.json`; a.click();}} className="bg-blue-600 px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 transition shadow-lg active:scale-95 text-white"><Database size={14}/>書出</button>
