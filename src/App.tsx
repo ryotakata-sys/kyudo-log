@@ -2,10 +2,10 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Undo, Save, Calendar, Database, Upload, RefreshCw, BarChart2, X, Trash2 } from "lucide-react";
 
 /**
- * 弓道「矢所ログ」V6.1 (V5.3デザイン完全復元 + 摩擦ゼロ・高速パッチ)
- * - V5.3のデザイン・機能を100%維持
- * - translate3dによるハードウェア加速
- * - 遅延の原因となるCSS Transitionを削除し、指への追従性を極限化
+ * 弓道「矢所ログ」V6.2 (V5.3デザイン完全復元 + 動作不具合完全解消版)
+ * - 画面が勝手に原点に戻るスナップバグを修正
+ * - translate3dによるGPU加速とTransition削除で遅延をゼロ化
+ * - ページ全体のバウンス（跳ね返り）をCSSで禁止
  */
 
 type Shot = { id: number; x: number; y: number; zone: string; comment: string; };
@@ -58,7 +58,7 @@ const App: React.FC = () => {
   const hasMovedRef = useRef(false);
   const isMultiTouchRef = useRef(false);
 
-  // iPadパッチ：ブラウザのバウンスを殺し、描画だけに集中させる
+  // iPadパッチ：Safariのスクロール干渉をシステムレベルで遮断
   useEffect(() => {
     const preventDefault = (e: TouchEvent) => {
       if (e.touches.length > 1 || (e.touches.length === 1 && !isRangeMode)) {
@@ -143,13 +143,14 @@ const App: React.FC = () => {
     lastTouchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
   };
 
+  // 【修正箇所】指を離した際に勝手に(0,0)に戻るロジックを削除（ズーム倍率のみ整理）
   const handleTouchEnd = (e: React.TouchEvent) => {
     if (!isMultiTouchRef.current && !hasMovedRef.current) {
       handleInteraction(e);
     }
-    if (zoom < 1.05) {
+    if (zoom < 1.01) {
       setZoom(1);
-      setOffset({ x: 0, y: 0 });
+      // setOffset({ x: 0, y: 0 }); // この行が「勝手に戻る」原因だったため削除
     }
   };
 
@@ -166,28 +167,29 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-white text-gray-900 font-sans overflow-hidden touch-none"
-         style={{ touchAction: 'none' }}
-         onTouchStart={handleTouchStart}
-         onTouchMove={handleTouchMove}
-         onTouchEnd={handleTouchEnd}
+    <div 
+      className="min-h-screen bg-white text-gray-900 font-sans overflow-hidden touch-none"
+      style={{ touchAction: 'none', overscrollBehavior: 'none' }}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
     >
       <header className="bg-black text-white px-8 py-5 flex justify-between items-center sticky top-0 z-50 shadow-xl">
-        <div className="font-black text-xl italic uppercase tracking-widest">弓道 矢所ログ</div>
+        <div className="font-black text-xl italic uppercase tracking-widest text-white">弓道 矢所ログ</div>
         <div className="flex gap-3">
           {!isRangeMode ? (
             <>
-              {editingId && <button onClick={deleteRecord} className="bg-red-900/50 hover:bg-red-700 px-4 py-2 rounded-lg font-black flex items-center gap-2 transition border border-red-800"><Trash2 size={18}/>削除</button>}
-              <button onClick={resetUI} className="bg-gray-800 px-4 py-2 rounded-lg text-xs font-bold">新規</button>
-              <button onClick={saveRecord} className="bg-emerald-700 px-6 py-2 rounded-lg font-black flex items-center gap-2 transition shadow-lg"><Save size={18}/>保存</button>
+              {editingId && <button onClick={deleteRecord} className="bg-red-900/50 hover:bg-red-700 px-4 py-2 rounded-lg font-black flex items-center gap-2 transition border border-red-800 text-white"><Trash2 size={18}/>削除</button>}
+              <button onClick={resetUI} className="bg-gray-800 px-4 py-2 rounded-lg text-xs font-bold text-white">新規</button>
+              <button onClick={saveRecord} className="bg-emerald-700 px-6 py-2 rounded-lg font-black flex items-center gap-2 transition shadow-lg text-white"><Save size={18}/>保存</button>
             </>
           ) : (
-            <button onClick={() => setIsRangeMode(false)} className="bg-red-700 px-6 py-2 rounded-lg font-black flex items-center gap-2 transition"><X size={18}/>終了</button>
+            <button onClick={() => setIsRangeMode(false)} className="bg-red-700 px-6 py-2 rounded-lg font-black flex items-center gap-2 transition text-white"><X size={18}/>終了</button>
           )}
         </div>
       </header>
 
-      {/* 修正箇所：もっさりの原因となる transition-transform と duration-75 を削除 */}
+      {/* 修正箇所：Transition(0.075sの遊び)を完全に削除し、指との同期率を100%に */}
       <div 
         className="origin-top-left"
         style={{ 
@@ -225,7 +227,7 @@ const App: React.FC = () => {
               <div className="flex justify-end items-center gap-4">
                 <span className="text-[10px] font-black text-gray-300 uppercase italic tracking-widest">Zoom: {zoom.toFixed(1)}x (Min: 1.0x)</span>
                 <button onClick={() => { setZoom(1); setOffset({x:0, y:0}); }} className="text-[10px] font-black text-gray-400 border border-gray-200 px-3 py-1 rounded-full active:bg-gray-100 transition shadow-sm">リセット</button>
-                <button onClick={()=>setShots(shots.slice(0,-1))} className="bg-black text-white px-8 py-3 rounded-2xl font-black flex items-center gap-2 shadow-lg transition active:scale-95" disabled={isRangeMode}><Undo size={20}/>戻す</button>
+                <button onClick={()=>setShots(shots.slice(0,-1))} className="bg-black text-white px-8 py-3 rounded-2xl font-black flex items-center gap-2 shadow-lg transition active:scale-95 text-white" disabled={isRangeMode}><Undo size={20}/>戻す</button>
               </div>
             </div>
 
@@ -271,12 +273,12 @@ const App: React.FC = () => {
       </div>
 
       <footer className="fixed bottom-0 left-0 w-full bg-black/90 text-white p-4 flex justify-around items-center z-50 border-t border-gray-800 backdrop-blur-md">
-        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic">V6.1 Boundary Lock</span></div>
+        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic">V6.2 Boundary Lock</span></div>
         <div className="flex gap-4">
-          <button onClick={() => importFileRef.current?.click()} className="bg-gray-800 px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 hover:bg-gray-700 transition active:scale-95"><Upload size={14}/>読込</button>
-          <button onClick={()=>{const d=localStorage.getItem(STORAGE_KEY); if(!d) return; const b=new Blob([d],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=`backup.json`; a.click();}} className="bg-blue-600 px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 transition shadow-lg active:scale-95"><Database size={14}/>書出</button>
-          <button onClick={() => { if(confirm("【警告】全データを消去して初期化しますか？")) { localStorage.removeItem(STORAGE_KEY); window.location.reload(); } }} className="bg-red-900/40 px-3 py-2 rounded-xl text-[10px] font-black border border-red-800 hover:bg-red-800 transition">全消去</button>
-          <button onClick={()=>window.location.reload()} className="bg-gray-900 px-4 py-2 rounded-xl border border-gray-800 hover:bg-black transition"><RefreshCw size={14}/></button>
+          <button onClick={() => importFileRef.current?.click()} className="bg-gray-800 px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 hover:bg-gray-700 transition active:scale-95 text-white"><Upload size={14}/>読込</button>
+          <button onClick={()=>{const d=localStorage.getItem(STORAGE_KEY); if(!d) return; const b=new Blob([d],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=`backup.json`; a.click();}} className="bg-blue-600 px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 transition shadow-lg active:scale-95 text-white"><Database size={14}/>書出</button>
+          <button onClick={() => { if(confirm("【警告】全データを消去して初期化しますか？")) { localStorage.removeItem(STORAGE_KEY); window.location.reload(); } }} className="bg-red-900/40 px-3 py-2 rounded-xl text-[10px] font-black border border-red-800 hover:bg-red-800 transition text-white">全消去</button>
+          <button onClick={()=>window.location.reload()} className="bg-gray-900 px-4 py-2 rounded-xl border border-gray-800 hover:bg-black transition text-white"><RefreshCw size={14}/></button>
         </div>
         <input ref={importFileRef} type="file" accept=".json" onChange={e => {
           const f=e.target.files?.[0]; if(!f) return; const r=new FileReader(); r.onload=ev=>{ try { const i=JSON.parse(ev.target?.result as string); if(confirm("統合しますか？")){ const c=[...i,...history]; const u=Array.from(new Map(c.map(t=>[t.id,t])).values()); setHistory(u.sort((a:any,b:any)=>b.date.localeCompare(a.date))); localStorage.setItem(STORAGE_KEY,JSON.stringify(u)); } } catch(err){alert("Error");} }; r.readAsText(f);
