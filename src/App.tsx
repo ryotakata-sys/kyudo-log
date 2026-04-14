@@ -2,11 +2,14 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Undo, Save, Calendar, Database, Upload, RefreshCw, BarChart2, X, Trash2 } from "lucide-react";
 
 /**
- * 弓道「矢所ログ」V5.4 (V5.3 完全デザイン復元 + iPad操作パッチ)
- * - ユーザー提供のV5.3オリジナルコードをベースに構築
- * - 見た目、機能、配置、配色を100%維持
- * - iPadOSのスクロール干渉(画面の引き戻し)のみを解消
+ * 弓道「矢所ログ」V6.1 (V5.3デザイン完全復元 + 摩擦ゼロ・高速パッチ)
+ * - V5.3のデザイン・機能を100%維持
+ * - translate3dによるハードウェア加速
+ * - 遅延の原因となるCSS Transitionを削除し、指への追従性を極限化
  */
+
+type Shot = { id: number; x: number; y: number; zone: string; comment: string; };
+type HistoryRecord = { id: number; date: string; place: string; note: string; shots: Shot[]; };
 
 const R = 50;
 const TARGET_SPACING = 9.6 * R;
@@ -15,9 +18,6 @@ const ANDUCHI_H = 8.8 * R;
 const STAIRS_H = 3.0 * R;
 const STORAGE_KEY = "kyudo-log-history";
 const PAN_SENSITIVITY = 1.25; 
-
-type Shot = { id: number; x: number; y: number; zone: string; comment: string; };
-type HistoryRecord = { id: number; date: string; place: string; note: string; shots: Shot[]; };
 
 const getAIAnalysis = (shots: Shot[]) => {
   if (shots.length === 0) return "データがありません。";
@@ -58,7 +58,7 @@ const App: React.FC = () => {
   const hasMovedRef = useRef(false);
   const isMultiTouchRef = useRef(false);
 
-  // 【パッチ】iPad Safariのスクロール・バウンスを強制停止（見た目不変）
+  // iPadパッチ：ブラウザのバウンスを殺し、描画だけに集中させる
   useEffect(() => {
     const preventDefault = (e: TouchEvent) => {
       if (e.touches.length > 1 || (e.touches.length === 1 && !isRangeMode)) {
@@ -187,11 +187,12 @@ const App: React.FC = () => {
         </div>
       </header>
 
+      {/* 修正箇所：もっさりの原因となる transition-transform と duration-75 を削除 */}
       <div 
-        className="transition-transform duration-75 origin-top-left"
+        className="origin-top-left"
         style={{ 
-          transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`,
-          willChange: 'transform' // 【パッチ】GPU描画を強制し、もっさり感を解消
+          transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${zoom})`,
+          willChange: 'transform'
         }}
       >
         <div className="p-8 pb-40">
@@ -255,7 +256,7 @@ const App: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
               <div className="p-6 rounded-3xl border text-center bg-gray-50 shadow-sm"><span className="text-[10px] font-black text-gray-400 block mb-1 italic">Total</span><span className="text-4xl font-black">{stats.total}</span></div>
               <div className="p-6 rounded-3xl border text-center bg-emerald-50 border-emerald-100 shadow-sm"><span className="text-[10px] font-black text-gray-400 block mb-1 text-emerald-600 italic">Hits</span><span className="text-4xl font-black text-emerald-600">{stats.hits}</span></div>
-              <div className="grid p-6 rounded-3xl border text-center bg-blue-50 border-blue-100 shadow-sm"><span className="text-[10px] font-black text-gray-400 block mb-1 text-blue-700 italic">Rate</span><span className="text-4xl font-black text-blue-700">{stats.rate}%</span></div>
+              <div className="p-6 rounded-3xl border text-center bg-blue-50 border-blue-100 shadow-sm"><span className="text-[10px] font-black text-gray-400 block mb-1 text-blue-700 italic">Rate</span><span className="text-4xl font-black text-blue-700">{stats.rate}%</span></div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {filteredHistory.map(h => (
@@ -270,7 +271,7 @@ const App: React.FC = () => {
       </div>
 
       <footer className="fixed bottom-0 left-0 w-full bg-black/90 text-white p-4 flex justify-around items-center z-50 border-t border-gray-800 backdrop-blur-md">
-        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic">V5.3 Boundary Lock</span></div>
+        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic">V6.1 Boundary Lock</span></div>
         <div className="flex gap-4">
           <button onClick={() => importFileRef.current?.click()} className="bg-gray-800 px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 hover:bg-gray-700 transition active:scale-95"><Upload size={14}/>読込</button>
           <button onClick={()=>{const d=localStorage.getItem(STORAGE_KEY); if(!d) return; const b=new Blob([d],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=`backup.json`; a.click();}} className="bg-blue-600 px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 transition shadow-lg active:scale-95"><Database size={14}/>書出</button>
