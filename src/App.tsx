@@ -2,10 +2,10 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Undo, Save, Calendar, Database, Upload, RefreshCw, BarChart2, X, Trash2 } from "lucide-react";
 
 /**
- * 弓道「矢所ログ」V7.1 (V5.3ベース 正道復帰版)
- * - ユーザー提供のV5.3コードを完全ベースに採用
- * - 遅延の原因（duration-75）を削除し、指への追従性を最大化
- * - 操作ロックをすべて解除。自由な移動を復元。
+ * 弓道「矢所ログ」V7.2 (V7.1ベース 判定ロジック微調整版)
+ * - 黄金の4か条を厳守
+ * - デザイン、レイアウト、CSSクラスをV7.1から一切変更しない
+ * - 矢所判定の境界値に 0.5px のマージンを付与し、視覚的な的中を確実に判定
  */
 
 type Shot = { id: number; x: number; y: number; zone: string; comment: string; };
@@ -63,7 +63,6 @@ const App: React.FC = () => {
   }, []);
 
   const filteredHistory = useMemo(() => isRangeMode ? history.filter(h => h.date >= startDate && h.date <= endDate) : history, [history, isRangeMode, startDate, endDate]);
-
   const stats = useMemo(() => {
     const all = filteredHistory.flatMap(h => h.shots);
     const hits = all.filter(s => s.zone === "的な").length;
@@ -74,7 +73,8 @@ const App: React.FC = () => {
 
   const saveRecord = () => {
     const newId = editingId || Date.now();
-    const newH = editingId ? history.map(h => h.id === editingId ? { ...h, date, place, note, shots } : h) : [{ id: newId, date, place, note, shots }, ...history];
+    const newH = editingId ?
+      history.map(h => h.id === editingId ? { ...h, date, place, note, shots } : h) : [{ id: newId, date, place, note, shots }, ...history];
     setHistory([...newH].sort((a, b) => b.date.localeCompare(a.date)));
     localStorage.setItem(STORAGE_KEY, JSON.stringify(newH));
     setEditingId(newId);
@@ -82,7 +82,8 @@ const App: React.FC = () => {
   };
 
   const loadHistory = (h: HistoryRecord) => {
-    setIsRangeMode(false); setEditingId(h.id); setDate(h.date); setPlace(h.place); setNote(h.note); setShots(h.shots); setZoom(1); setOffset({x:0, y:0});
+    setIsRangeMode(false);
+    setEditingId(h.id); setDate(h.date); setPlace(h.place); setNote(h.note); setShots(h.shots); setZoom(1); setOffset({x:0, y:0});
   };
 
   const deleteRecord = () => {
@@ -108,7 +109,6 @@ const App: React.FC = () => {
     if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
     
     hasMovedRef.current = true;
-
     if (e.touches.length === 2 && touchDistRef.current !== null) {
       const centerX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
       const centerY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
@@ -116,7 +116,6 @@ const App: React.FC = () => {
       const delta = dist / touchDistRef.current;
       
       const nextZoom = Math.min(Math.max(zoom * delta, 1.0), 5);
-
       if (nextZoom !== zoom) {
         setOffset(prev => ({
           x: centerX - (centerX - prev.x) * (nextZoom / zoom),
@@ -142,7 +141,10 @@ const App: React.FC = () => {
     if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return;
     const x = (clientX - rect.left - rect.width / 2) * ((ANDUCHI_W + 100) / rect.width);
     const y = (clientY - rect.top - rect.height / 2) * ((ANDUCHI_H + STAIRS_H + 100) / rect.height);
-    const zone = Math.sqrt(x*x + (y - ANDUCHI_H/3)**2) <= R ? "的な" : (y < ANDUCHI_H/2 ? "安土" : "階段");
+    
+    // 【外科手術的パッチ】判定境界に 0.5px のバッファを追加
+    const zone = Math.sqrt(x*x + (y - ANDUCHI_H/3)**2) <= (R + 0.5) ? "的な" : (y < ANDUCHI_H/2 ? "安土" : "階段");
+    
     setShots([...shots, { id: Date.now(), x, y, zone, comment: "" }]);
   };
 
@@ -167,7 +169,6 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {/* 修正箇所：もっさりの原因となる transition-transform と duration-75 を削除し、translate3dを採用 */}
       <div 
         className="origin-top-left"
         style={{ 
@@ -212,7 +213,8 @@ const App: React.FC = () => {
             <aside className="space-y-6">
               <div className="bg-white border-2 border-gray-100 rounded-[2rem] p-6 h-[500px] overflow-y-auto shadow-sm">
                 <h3 className="text-xs font-black text-gray-400 uppercase mb-4 flex justify-between italic tracking-widest font-bold"><span>{isRangeMode ? 'AI分析結果' : 'Shots Note'}</span><span>{isRangeMode ? '' : '判定 | 備考'}</span></h3>
-                {!isRangeMode ? shots.map((s, i) => (
+                {!isRangeMode ?
+                shots.map((s, i) => (
                   <div key={s.id} className="flex gap-3 mb-4 border-b border-gray-50 pb-4 items-center">
                     <div className="w-7 h-7 bg-black text-white rounded-full flex items-center justify-center font-bold text-[10px] shrink-0">{i+1}</div>
                     <div className={`text-xs font-black shrink-0 w-10 ${s.zone==="的な"?"text-red-600":"text-gray-500"}`}>{s.zone==="的な"?"的中":"安土"}</div>
@@ -259,7 +261,8 @@ const App: React.FC = () => {
           <button onClick={()=>window.location.reload()} className="bg-gray-900 px-4 py-2 rounded-xl border border-gray-800 hover:bg-black transition"><RefreshCw size={14}/></button>
         </div>
         <input ref={importFileRef} type="file" accept=".json" onChange={e => {
-          const f=e.target.files?.[0]; if(!f) return; const r=new FileReader(); r.onload=ev=>{ try { const i=JSON.parse(ev.target?.result as string); if(confirm("統合しますか？")){ const c=[...i,...history]; const u=Array.from(new Map(c.map(t=>[t.id,t])).values()); setHistory(u.sort((a:any,b:any)=>b.date.localeCompare(a.date))); localStorage.setItem(STORAGE_KEY,JSON.stringify(u)); } } catch(err){alert("Error");} }; r.readAsText(f);
+          const f=e.target.files?.[0];
+          if(!f) return; const r=new FileReader(); r.onload=ev=>{ try { const i=JSON.parse(ev.target?.result as string); if(confirm("統合しますか？")){ const c=[...i,...history]; const u=Array.from(new Map(c.map(t=>[t.id,t])).values()); setHistory(u.sort((a:any,b:any)=>b.date.localeCompare(a.date))); localStorage.setItem(STORAGE_KEY,JSON.stringify(u)); } } catch(err){alert("Error");} }; r.readAsText(f);
         }} className="hidden" />
       </footer>
     </div>
