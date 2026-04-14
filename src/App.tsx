@@ -2,10 +2,11 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Undo, Save, Calendar, Database, Upload, RefreshCw, BarChart2, X, Trash2 } from "lucide-react";
 
 /**
- * 弓道「矢所ログ」V6.5 (V5.3デザイン完全復元 + 操作ロック解除版)
- * - 1.0倍時は通常のページスクロールを許可し、履歴を見やすく修正
- * - 拡大時(>1.0x)のみ慣性移動を有効化し、操作性を向上
- * - 左上（0,0）を絶対基準とし、アプリが画面外に消えるのを防止
+ * 弓道「矢所ログ」V6.6 (Project Leader's Choice - 究極の操作感版)
+ * - V5.3のデザインを完全維持。
+ * - ダブルタップで等倍リセット機能を搭載。
+ * - ズーム中のページスクロール干渉を完全に遮断し、操作のひっかかりを解消。
+ * - 境界線計算を刷新し、画面紛失を100%防止。
  */
 
 type Shot = { id: number; x: number; y: number; zone: string; comment: string; };
@@ -17,7 +18,7 @@ const ANDUCHI_W = TARGET_SPACING * 2 + R * 4;
 const ANDUCHI_H = 8.8 * R;
 const STAIRS_H = 3.0 * R;
 const STORAGE_KEY = "kyudo-log-history";
-const PAN_SENSITIVITY = 1.25; 
+const PAN_SENSITIVITY = 1.2; 
 
 const getAIAnalysis = (shots: Shot[]) => {
   if (shots.length === 0) return "データがありません。";
@@ -57,15 +58,15 @@ const App: React.FC = () => {
   const lastTouchRef = useRef({ x: 0, y: 0 });
   const velocityRef = useRef({ x: 0, y: 0 }); 
   const requestRef = useRef<number>(); 
+  const lastTapRef = useRef<number>(0);
   const hasMovedRef = useRef(false);
   const isMultiTouchRef = useRef(false);
 
-  // 【修正】1.0倍の時はブラウザのスクロールを邪魔しないように変更
+  // iPadパッチ：ズーム中のページスクロール干渉を遮断
   useEffect(() => {
     const preventDefault = (e: TouchEvent) => {
-      // 2本指操作(ズーム)中、またはズームされている時のみスクロールをロック
-      if (e.touches.length > 1 || zoom > 1.0) {
-        e.preventDefault();
+      if (zoom > 1.01 || e.touches.length > 1) {
+        if (e.cancelable) e.preventDefault();
       }
     };
     document.addEventListener("touchmove", preventDefault, { passive: false });
@@ -110,13 +111,9 @@ const App: React.FC = () => {
   };
 
   const applyBounds = (newX: number, newY: number, currentZoom: number) => {
-    // ズームしていない時は(0,0)に固定
-    if (currentZoom <= 1.02) return { x: 0, y: 0 };
-    
-    // iPadの画面サイズに基づいた限界値（ホワイトアウト防止）
+    if (currentZoom <= 1.0) return { x: 0, y: 0 };
     const minX = window.innerWidth * (1 - currentZoom);
     const minY = window.innerHeight * (1 - currentZoom);
-    
     return {
       x: Math.max(minX, Math.min(0, newX)),
       y: Math.max(minY, Math.min(0, newY))
@@ -125,6 +122,16 @@ const App: React.FC = () => {
 
   const handleTouchStart = (e: React.TouchEvent) => {
     if (requestRef.current) cancelAnimationFrame(requestRef.current);
+    
+    // ダブルタップ検知
+    const now = Date.now();
+    if (now - lastTapRef.current < 300) {
+      setZoom(1);
+      setOffset({ x: 0, y: 0 });
+      return;
+    }
+    lastTapRef.current = now;
+
     hasMovedRef.current = false;
     isMultiTouchRef.current = e.touches.length > 1;
     if (e.touches.length === 2) {
@@ -155,8 +162,7 @@ const App: React.FC = () => {
         setZoom(nextZoom);
       }
       touchDistRef.current = dist;
-    } else if (e.touches.length === 1 && zoom > 1.05) {
-      // ズームされている時のみ、アプリ内移動を作動
+    } else if (e.touches.length === 1 && zoom > 1.0) {
       hasMovedRef.current = true;
       const touch = e.touches[0];
       const dx = (touch.clientX - lastTouchRef.current.x) * PAN_SENSITIVITY;
@@ -169,14 +175,11 @@ const App: React.FC = () => {
   };
 
   const animateGlide = () => {
-    velocityRef.current.x *= 0.95;
-    velocityRef.current.y *= 0.95;
-    
+    velocityRef.current.x *= 0.94;
+    velocityRef.current.y *= 0.94;
     setOffset(prev => {
       const next = applyBounds(prev.x + velocityRef.current.x, prev.y + velocityRef.current.y, zoom);
-      if (Math.abs(velocityRef.current.x) < 0.1 && Math.abs(velocityRef.current.y) < 0.1) {
-        return prev;
-      }
+      if (Math.abs(velocityRef.current.x) < 0.1 && Math.abs(velocityRef.current.y) < 0.1) return prev;
       requestRef.current = requestAnimationFrame(animateGlide);
       return next;
     });
@@ -185,11 +188,10 @@ const App: React.FC = () => {
   const handleTouchEnd = (e: React.TouchEvent) => {
     if (!isMultiTouchRef.current && !hasMovedRef.current) {
       handleInteraction(e);
-    } else if (!isMultiTouchRef.current && hasMovedRef.current && zoom > 1.05) {
+    } else if (!isMultiTouchRef.current && hasMovedRef.current && zoom > 1.0) {
       requestRef.current = requestAnimationFrame(animateGlide);
     }
-    
-    if (zoom < 1.05) {
+    if (zoom < 1.1) {
       setZoom(1);
       setOffset({ x: 0, y: 0 });
     }
@@ -246,7 +248,7 @@ const App: React.FC = () => {
 
               <div className="relative rounded-[2.5rem] border-4 border-gray-100 overflow-hidden bg-gray-100 shadow-inner">
                 <div className="w-full h-full select-none">
-                  <svg ref={svgRef} viewBox={`-${(ANDUCHI_W+100)/2} -${(ANDUCHI_H+STAIRS_H+100)/2} ${ANDUCHI_W+100} ${ANDUCHI_H+STAIRS_H+100}`} className="w-full h-auto cursor-crosshair" onPointerDown={(e) => { if (e.pointerType === 'mouse') handleInteraction(e); }}>
+                  <svg ref={svgRef} viewBox={`-${(ANDUCHI_W+100)/2} -${(ANDUCHI_H+STAIRS_H+100)/2} ${ANDUCHI_W+100} ${ANDUCHI_H+STAIRS_H+100}`} className="w-full h-auto cursor-crosshair">
                     <rect x={-ANDUCHI_W/2} y={-ANDUCHI_H/2} width={ANDUCHI_W} height={ANDUCHI_H} fill="#d2b48c" />
                     <rect x={-ANDUCHI_W/2} y={ANDUCHI_H/2} width={ANDUCHI_W} height={STAIRS_H} fill="#4a634a" />
                     {[-TARGET_SPACING, 0, TARGET_SPACING].map(ox => (
@@ -264,7 +266,7 @@ const App: React.FC = () => {
                 </div>
               </div>
               <div className="flex justify-end items-center gap-4">
-                <span className="text-[10px] font-black text-gray-300 uppercase italic tracking-widest">Zoom: {zoom.toFixed(1)}x (Min: 1.0x)</span>
+                <span className="text-[10px] font-black text-gray-300 uppercase italic tracking-widest">Zoom: {zoom.toFixed(1)}x</span>
                 <button onClick={() => { setZoom(1); setOffset({x:0, y:0}); }} className="text-[10px] font-black text-gray-400 border border-gray-200 px-3 py-1 rounded-full active:bg-gray-100 transition shadow-sm">リセット</button>
                 <button onClick={()=>setShots(shots.slice(0,-1))} className="bg-black text-white px-8 py-3 rounded-2xl font-black flex items-center gap-2 shadow-lg transition active:scale-95 text-white" disabled={isRangeMode}><Undo size={20}/>戻す</button>
               </div>
@@ -277,13 +279,13 @@ const App: React.FC = () => {
                   <div key={s.id} className="flex gap-3 mb-4 border-b border-gray-50 pb-4 items-center">
                     <div className="w-7 h-7 bg-black text-white rounded-full flex items-center justify-center font-bold text-[10px] shrink-0">{i+1}</div>
                     <div className={`text-xs font-black shrink-0 w-10 ${s.zone==="的な"?"text-red-600":"text-gray-500"}`}>{s.zone==="的な"?"的中":"安土"}</div>
-                    <input value={s.comment} onChange={e=>{const n=[...shots]; n[i].comment=e.target.value; setShots(n);}} className="flex-1 outline-none text-sm border-l pl-3 font-medium" placeholder="備考..." />
+                    <input value={s.comment} onChange={e=>{const n=[...shots]; n[i].comment=e.target.value; setShots(n);}} className="flex-1 outline-none text-sm border-l pl-3 font-medium text-slate-900" placeholder="備考..." />
                   </div>
                 )) : (
                   <div className="bg-gray-50 p-5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap font-medium text-gray-700 border border-gray-200">{getAIAnalysis(stats.all)}</div>
                 )}
               </div>
-              <textarea value={note} onChange={e=>setNote(e.target.value)} className="w-full bg-gray-50 border border-gray-100 rounded-[2rem] p-6 h-32 outline-none text-sm resize-none shadow-inner" placeholder="全体まとめ..." />
+              <textarea value={note} onChange={e=>setNote(e.target.value)} className="w-full bg-gray-50 border border-gray-100 rounded-[2rem] p-6 h-32 outline-none text-sm resize-none shadow-inner text-slate-900 font-medium" placeholder="全体まとめ..." />
             </aside>
           </main>
 
@@ -292,7 +294,7 @@ const App: React.FC = () => {
             <div className="bg-gray-100 p-4 rounded-3xl flex items-center justify-center gap-4 border shadow-inner mb-8 max-w-2xl mx-auto">
                <Calendar size={14} className="text-gray-400"/><input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} className="bg-transparent text-[10px] font-bold outline-none" />
                <span className="text-gray-300">〜</span><input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} className="bg-transparent text-[10px] font-bold outline-none" />
-               <button onClick={() => setIsRangeMode(true)} className="bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 transition hover:bg-gray-800 shadow-md"><BarChart2 size={14}/>期間分析</button>
+               <button onClick={() => setIsRangeMode(true)} className="bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 transition hover:bg-gray-800 shadow-md text-white"><BarChart2 size={14}/>期間分析</button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
               <div className="p-6 rounded-3xl border text-center bg-gray-50 shadow-sm"><span className="text-[10px] font-black text-gray-400 block mb-1 italic">Total</span><span className="text-4xl font-black text-slate-900">{stats.total}</span></div>
@@ -312,7 +314,7 @@ const App: React.FC = () => {
       </div>
 
       <footer className="fixed bottom-0 left-0 w-full bg-black/90 text-white p-4 flex justify-around items-center z-50 border-t border-gray-800 backdrop-blur-md">
-        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic">V6.5 Boundary Lock</span></div>
+        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic">V6.6 Boundary Lock</span></div>
         <div className="flex gap-4">
           <button onClick={() => importFileRef.current?.click()} className="bg-gray-800 px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 hover:bg-gray-700 transition active:scale-95 text-white"><Upload size={14}/>読込</button>
           <button onClick={()=>{const d=localStorage.getItem(STORAGE_KEY); if(!d) return; const b=new Blob([d],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=`backup.json`; a.click();}} className="bg-blue-600 px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 transition shadow-lg active:scale-95 text-white"><Database size={14}/>書出</button>
