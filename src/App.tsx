@@ -2,10 +2,10 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Undo, Save, Calendar, Database, Upload, RefreshCw, BarChart2, X, Trash2 } from "lucide-react";
 
 /**
- * 弓道「矢所ログ」V6.2 (V5.3デザイン完全復元 + 動作不具合完全解消版)
- * - 画面が勝手に原点に戻るスナップバグを修正
- * - translate3dによるGPU加速とTransition削除で遅延をゼロ化
- * - ページ全体のバウンス（跳ね返り）をCSSで禁止
+ * 弓道「矢所ログ」V6.4 (V5.3デザイン完全復元 + 境界線ガード + 1.0x固定版)
+ * - 1.0倍時は画面移動を完全無効化し、ひっかかりを解消
+ * - 拡大時はiPadの画面幅を超えて画面が消えないよう移動制限を強化
+ * - 左上（0,0）を基準点として、常にアプリが視界に収まるよう設計
  */
 
 type Shot = { id: number; x: number; y: number; zone: string; comment: string; };
@@ -55,10 +55,11 @@ const App: React.FC = () => {
   
   const touchDistRef = useRef<number | null>(null);
   const lastTouchRef = useRef({ x: 0, y: 0 });
+  const velocityRef = useRef({ x: 0, y: 0 }); 
+  const requestRef = useRef<number>(); 
   const hasMovedRef = useRef(false);
   const isMultiTouchRef = useRef(false);
 
-  // iPadパッチ：Safariのスクロール干渉をシステムレベルで遮断
   useEffect(() => {
     const preventDefault = (e: TouchEvent) => {
       if (e.touches.length > 1 || (e.touches.length === 1 && !isRangeMode)) {
@@ -106,13 +107,29 @@ const App: React.FC = () => {
     alert("削除完了");
   };
 
+  // 【V6.4 強化パッチ】アプリが画面外に消えないための精密な境界線計算
+  const applyBounds = (newX: number, newY: number, currentZoom: number) => {
+    if (currentZoom <= 1.0) return { x: 0, y: 0 };
+    
+    // iPadの画面サイズに基づいた限界値の計算
+    const minX = window.innerWidth * (1 - currentZoom);
+    const minY = window.innerHeight * (1 - currentZoom);
+    
+    return {
+      x: Math.max(minX, Math.min(0, newX)),
+      y: Math.max(minY, Math.min(0, newY))
+    };
+  };
+
   const handleTouchStart = (e: React.TouchEvent) => {
+    if (requestRef.current) cancelAnimationFrame(requestRef.current);
     hasMovedRef.current = false;
     isMultiTouchRef.current = e.touches.length > 1;
     if (e.touches.length === 2) {
       touchDistRef.current = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
     }
     lastTouchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    velocityRef.current = { x: 0, y: 0 };
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
@@ -126,31 +143,53 @@ const App: React.FC = () => {
       const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
       const delta = dist / touchDistRef.current;
       const nextZoom = Math.min(Math.max(zoom * delta, 1.0), 5);
+      
       if (nextZoom !== zoom) {
-        setOffset(prev => ({
-          x: centerX - (centerX - prev.x) * (nextZoom / zoom),
-          y: centerY - (centerY - prev.y) * (nextZoom / zoom)
-        }));
+        setOffset(prev => applyBounds(
+          centerX - (centerX - prev.x) * (nextZoom / zoom),
+          centerY - (centerY - prev.y) * (nextZoom / zoom),
+          nextZoom
+        ));
         setZoom(nextZoom);
       }
       touchDistRef.current = dist;
-    } else if (e.touches.length === 1) {
+    } else if (e.touches.length === 1 && zoom > 1.0) {
+      // 等倍時は移動処理自体をスキップして「ひっかかり」をゼロに
       const touch = e.touches[0];
       const dx = (touch.clientX - lastTouchRef.current.x) * PAN_SENSITIVITY;
       const dy = (touch.clientY - lastTouchRef.current.y) * PAN_SENSITIVITY;
-      setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
+      
+      velocityRef.current = { x: dx, y: dy };
+      setOffset(prev => applyBounds(prev.x + dx, prev.y + dy, zoom));
     }
     lastTouchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
   };
 
-  // 【修正箇所】指を離した際に勝手に(0,0)に戻るロジックを削除（ズーム倍率のみ整理）
+  const animateGlide = () => {
+    velocityRef.current.x *= 0.95;
+    velocityRef.current.y *= 0.95;
+    
+    setOffset(prev => {
+      const next = applyBounds(prev.x + velocityRef.current.x, prev.y + velocityRef.current.y, zoom);
+      if (Math.abs(velocityRef.current.x) < 0.1 && Math.abs(velocityRef.current.y) < 0.1) {
+        return prev;
+      }
+      requestRef.current = requestAnimationFrame(animateGlide);
+      return next;
+    });
+  };
+
   const handleTouchEnd = (e: React.TouchEvent) => {
     if (!isMultiTouchRef.current && !hasMovedRef.current) {
       handleInteraction(e);
+    } else if (!isMultiTouchRef.current && hasMovedRef.current && zoom > 1.0) {
+      requestRef.current = requestAnimationFrame(animateGlide);
     }
-    if (zoom < 1.01) {
+    
+    // スナップ判定の最適化
+    if (zoom < 1.02) {
       setZoom(1);
-      // setOffset({ x: 0, y: 0 }); // この行が「勝手に戻る」原因だったため削除
+      setOffset({ x: 0, y: 0 });
     }
   };
 
@@ -167,12 +206,11 @@ const App: React.FC = () => {
   };
 
   return (
-    <div 
-      className="min-h-screen bg-white text-gray-900 font-sans overflow-hidden touch-none"
-      style={{ touchAction: 'none', overscrollBehavior: 'none' }}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
+    <div className="min-h-screen bg-white text-gray-900 font-sans overflow-hidden touch-none"
+         style={{ touchAction: 'none', overscrollBehavior: 'none' }}
+         onTouchStart={handleTouchStart}
+         onTouchMove={handleTouchMove}
+         onTouchEnd={handleTouchEnd}
     >
       <header className="bg-black text-white px-8 py-5 flex justify-between items-center sticky top-0 z-50 shadow-xl">
         <div className="font-black text-xl italic uppercase tracking-widest text-white">弓道 矢所ログ</div>
@@ -189,7 +227,6 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {/* 修正箇所：Transition(0.075sの遊び)を完全に削除し、指との同期率を100%に */}
       <div 
         className="origin-top-left"
         style={{ 
@@ -256,7 +293,7 @@ const App: React.FC = () => {
                <button onClick={() => setIsRangeMode(true)} className="bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 transition hover:bg-gray-800 shadow-md"><BarChart2 size={14}/>期間分析</button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
-              <div className="p-6 rounded-3xl border text-center bg-gray-50 shadow-sm"><span className="text-[10px] font-black text-gray-400 block mb-1 italic">Total</span><span className="text-4xl font-black">{stats.total}</span></div>
+              <div className="p-6 rounded-3xl border text-center bg-gray-50 shadow-sm"><span className="text-[10px] font-black text-gray-400 block mb-1 italic">Total</span><span className="text-4xl font-black text-slate-900">{stats.total}</span></div>
               <div className="p-6 rounded-3xl border text-center bg-emerald-50 border-emerald-100 shadow-sm"><span className="text-[10px] font-black text-gray-400 block mb-1 text-emerald-600 italic">Hits</span><span className="text-4xl font-black text-emerald-600">{stats.hits}</span></div>
               <div className="p-6 rounded-3xl border text-center bg-blue-50 border-blue-100 shadow-sm"><span className="text-[10px] font-black text-gray-400 block mb-1 text-blue-700 italic">Rate</span><span className="text-4xl font-black text-blue-700">{stats.rate}%</span></div>
             </div>
@@ -273,7 +310,7 @@ const App: React.FC = () => {
       </div>
 
       <footer className="fixed bottom-0 left-0 w-full bg-black/90 text-white p-4 flex justify-around items-center z-50 border-t border-gray-800 backdrop-blur-md">
-        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic">V6.2 Boundary Lock</span></div>
+        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic">V6.4 Boundary Lock</span></div>
         <div className="flex gap-4">
           <button onClick={() => importFileRef.current?.click()} className="bg-gray-800 px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 hover:bg-gray-700 transition active:scale-95 text-white"><Upload size={14}/>読込</button>
           <button onClick={()=>{const d=localStorage.getItem(STORAGE_KEY); if(!d) return; const b=new Blob([d],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=`backup.json`; a.click();}} className="bg-blue-600 px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 transition shadow-lg active:scale-95 text-white"><Database size={14}/>書出</button>
