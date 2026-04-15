@@ -1,12 +1,10 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Undo, Save, Calendar, Database, Upload, RefreshCw, BarChart2, X, Trash2 } from "lucide-react";
-
 /**
- * 弓道「矢所ログ」V8.0 (Ultimate Core - Stability & Data Integrity)
- * - 操作感：V7.1の「ダイレクト追従」を完全復旧。
- * - 判定：新規入力は中央の的のみ「的中」。
- * - 表示：過去データの判定結果(的な/安土)を書き換えずにそのまま表示。
- * - 機能：期間分析、統計、履歴アーカイブをすべて原本通りに完備。
+ * 弓道「矢所ログ」V8.1 (UX & Data Integrity - Fix)
+ * - 操作感：iPadでの画面移動速度をV8.0から20%向上。
+ * - 判定：過去データの「的」表記にも対応し、的中を正確に集計。
+ * - 修正機能：Shots Noteの判定（的中/安土）をタップで手動切り替え可能に。
  */
 
 type Shot = { id: number; x: number; y: number; zone: string; comment: string; };
@@ -23,7 +21,8 @@ const getAIAnalysis = (shots: Shot[]) => {
   if (shots.length === 0) return "データがありません。";
   const avgX = shots.reduce((acc, s) => acc + s.x, 0) / shots.length;
   const avgY = shots.reduce((acc, s) => acc + s.y, 0) / shots.length;
-  const hits = shots.filter(s => s.zone === "的な").length;
+  // 過去データの「的に」「的」の両方をカウント
+  const hits = shots.filter(s => s.zone === "的な" || s.zone === "的な" || s.zone === "的").length;
   const hitRate = (hits / shots.length) * 100;
   let report = `【AI矢所分析】\n\n`;
   if (avgX > 15) report += `・「右逸」傾向。妻手の緩みに注意。\n\n`;
@@ -68,7 +67,8 @@ const App: React.FC = () => {
 
   const stats = useMemo(() => {
     const all = filteredHistory.flatMap(h => h.shots);
-    const hits = all.filter(s => s.zone === "的な").length;
+    // 過去データの「的」もカウント対象に含める
+    const hits = all.filter(s => s.zone === "的な" || s.zone === "的").length;
     return { total: all.length, hits, rate: all.length > 0 ? ((hits / all.length) * 100).toFixed(1) : "0.0", all };
   }, [filteredHistory]);
 
@@ -76,7 +76,8 @@ const App: React.FC = () => {
 
   const saveRecord = () => {
     const newId = editingId || Date.now();
-    const newH = editingId ? history.map(h => h.id === editingId ? { ...h, date, place, note, shots } : h) : [{ id: newId, date, place, note, shots }, ...history];
+    const newH = editingId ?
+      history.map(h => h.id === editingId ? { ...h, date, place, note, shots } : h) : [{ id: newId, date, place, note, shots }, ...history];
     const sorted = [...newH].sort((a, b) => b.date.localeCompare(a.date));
     setHistory(sorted);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(sorted));
@@ -110,7 +111,6 @@ const App: React.FC = () => {
     if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
     
     hasMovedRef.current = true;
-
     if (e.touches.length === 2 && touchDistRef.current !== null) {
       const centerX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
       const centerY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
@@ -126,9 +126,9 @@ const App: React.FC = () => {
       }
       touchDistRef.current = dist;
     } else if (e.touches.length === 1) {
-      // V7.1のダイレクトなスライド処理を正確に再現
-      const dx = e.touches[0].clientX - lastTouchRef.current.x;
-      const dy = e.touches[0].clientY - lastTouchRef.current.y;
+      // V7.1のロジックに1.2倍の感度を注入して高速化
+      const dx = (e.touches[0].clientX - lastTouchRef.current.x) * 1.2;
+      const dy = (e.touches[0].clientY - lastTouchRef.current.y) * 1.2;
       setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
       lastTouchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
     }
@@ -140,11 +140,8 @@ const App: React.FC = () => {
     const clientX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
     const clientY = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
     if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return;
-    
     const x = (clientX - rect.left - rect.width / 2) * ((ANDUCHI_W + 100) / rect.width);
     const y = (clientY - rect.top - rect.height / 2) * ((ANDUCHI_H + STAIRS_H + 100) / rect.height);
-    
-    // 【判定】中央の的のみ的中とする
     const isHit = Math.sqrt(x*x + (y - ANDUCHI_H/3)**2) <= R;
     const zone = isHit ? "的な" : (y < ANDUCHI_H/2 ? "安土" : "階段");
     setShots([...shots, { id: Date.now(), x, y, zone, comment: "" }]);
@@ -198,9 +195,8 @@ const App: React.FC = () => {
                   ))}
                   {(isRangeMode ? stats.all : shots).map((s, idx) => (
                     <g key={s.id} transform={`translate(${s.x}, ${s.y})`}>
-                      {/* 判定修正：過去データの判定結果を尊重して描画 */}
-                      <circle r={14} fill={isRangeMode ? "rgba(0,0,0,0.5)" : "white"} stroke={s.zone==="的な"?"#ef4444":"#374151"} strokeWidth={2.5} />
-                      {!isRangeMode && <text fontSize={12} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill={s.zone==="的な"?"#ef4444":"#374151"}>{idx+1}</text>}
+                      <circle r={14} fill={isRangeMode ? "rgba(0,0,0,0.5)" : "white"} stroke={(s.zone==="的な" || s.zone==="的")?"#ef4444":"#374151"} strokeWidth={2.5} />
+                      {!isRangeMode && <text fontSize={12} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill={(s.zone==="的な" || s.zone==="分")?"#ef4444":"#374151"}>{idx+1}</text>}
                     </g>
                   ))}
                 </svg>
@@ -214,10 +210,16 @@ const App: React.FC = () => {
             <aside className="space-y-6">
               <div className="bg-white border-2 border-gray-100 rounded-[2rem] p-6 h-[500px] overflow-y-auto shadow-sm">
                 <h3 className="text-xs font-black text-gray-400 uppercase mb-4 flex justify-between italic tracking-widest font-bold"><span>{isRangeMode ? 'AI分析結果' : 'Shots Note'}</span></h3>
-                {!isRangeMode ? shots.map((s, i) => (
+                {!isRangeMode ?
+                shots.map((s, i) => (
                   <div key={s.id} className="flex gap-3 mb-4 border-b border-gray-50 pb-4 items-center text-slate-900">
                     <div className="w-7 h-7 bg-black text-white rounded-full flex items-center justify-center font-bold text-[10px] shrink-0">{i+1}</div>
-                    <div className={`text-xs font-black shrink-0 w-10 ${s.zone==="的な"?"text-red-600":"text-gray-500"}`}>{s.zone==="的な"?"的中":"安土"}</div>
+                    <button 
+                      onClick={() => { const n=[...shots]; n[i].zone = (s.zone==="的な" || s.zone==="的") ? "安土" : "的な"; setShots(n); }}
+                      className={`text-xs font-black shrink-0 w-10 text-left ${(s.zone==="的な" || s.zone==="的")?"text-red-600":"text-gray-500"}`}
+                    >
+                      {(s.zone==="的な" || s.zone==="的な" || s.zone==="的")?"的中":"安土"}
+                    </button>
                     <input value={s.comment} onChange={e=>{const n=[...shots]; n[i].comment=e.target.value; setShots(n);}} className="flex-1 outline-none text-sm border-l pl-3 font-medium" placeholder="備考..." />
                   </div>
                 )) : (
@@ -244,7 +246,7 @@ const App: React.FC = () => {
               {filteredHistory.map(h => (
                 <button key={h.id} onClick={()=>loadHistory(h)} className={`p-6 rounded-[2rem] border-4 text-left transition-all ${editingId===h.id ? "bg-black text-white border-black shadow-2xl scale-105" : "bg-white border-gray-100 hover:border-gray-200 shadow-sm text-slate-900"}`}>
                   <div className="text-xs font-mono mb-2 opacity-60">{h.date}</div><div className="font-black truncate text-lg italic uppercase">{h.place || "PRACTICE"}</div>
-                  <div className="mt-4 text-[10px] border-t pt-2 flex justify-between opacity-80 font-bold uppercase"><span>{h.shots.length} Shots</span><span className={editingId===h.id ? 'text-emerald-400' : 'text-emerald-600'}>Hits {h.shots.filter(s=>s.zone==="的な").length}</span></div>
+                  <div className="mt-4 text-[10px] border-t pt-2 flex justify-between opacity-80 font-bold uppercase"><span>{h.shots.length} Shots</span><span className={editingId===h.id ? 'text-emerald-400' : 'text-emerald-600'}>Hits {h.shots.filter(s=>s.zone==="的な" || s.zone==="的").length}</span></div>
                 </button>
               ))}
             </div>
@@ -253,7 +255,7 @@ const App: React.FC = () => {
       </div>
 
       <footer className="fixed bottom-0 left-0 w-full bg-black/90 text-white p-4 flex justify-around items-center z-50 border-t border-gray-800 backdrop-blur-md">
-        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic text-white">V8.0 Complete Stable</span></div>
+        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic text-white">V8.1 Complete Stability</span></div>
         <div className="flex gap-4">
           <button onClick={() => importFileRef.current?.click()} className="bg-gray-800 px-4 py-2 rounded-xl text-[10px] font-black text-white">読込</button>
           <button onClick={()=>{const d=localStorage.getItem(STORAGE_KEY); if(!d) return; const b=new Blob([d],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=`backup.json`; a.click();}} className="bg-blue-600 px-4 py-2 rounded-xl text-[10px] font-black text-white">書出</button>
@@ -261,7 +263,9 @@ const App: React.FC = () => {
           <button onClick={()=>window.location.reload()} className="bg-gray-900 px-4 py-2 rounded-xl border border-gray-800 text-white"><RefreshCw size={14}/></button>
         </div>
         <input ref={importFileRef} type="file" accept=".json" onChange={e => {
-          const f=e.target.files?.[0]; if(!f) return; const r=new FileReader(); r.onload=ev=>{ try { const i=JSON.parse(ev.target?.result as string); if(confirm("統合しますか？")){ const c=[...i,...history]; const u=Array.from(new Map(c.map(t=>[t.id,t])).values()); setHistory(u.sort((a:any,b:any)=>b.date.localeCompare(a.date))); localStorage.setItem(STORAGE_KEY,JSON.stringify(u)); } } catch(err){alert("Error");} }; r.readAsText(f);
+          const f=e.target.files?.[0];
+          if(!f) return; const r=new FileReader(); r.onload=ev=>{ try { const i=JSON.parse(ev.target?.result as string); if(confirm("統合しますか？")){ const c=[...i,...history]; const u=Array.from(new Map(c.map(t=>[t.id,t])).values()); setHistory(u.sort((a:any,b:any)=>b.date.localeCompare(a.date))); localStorage.setItem(STORAGE_KEY,JSON.stringify(u));
+          } } catch(err){alert("Error");} }; r.readAsText(f);
         }} className="hidden" />
       </footer>
     </div>
