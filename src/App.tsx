@@ -2,10 +2,10 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Undo, Save, Calendar, Database, Upload, RefreshCw, BarChart2, X, Trash2 } from "lucide-react";
 
 /**
- * 弓道「矢所ログ」V8.6 (Ultimate Core - Smooth Limit)
- * - 解決：V8.5の操作ロックを廃止。V8.3の自由な移動速度(1.2倍)と余韻(0.94)を復活。
- * - 安定：画面外への無限移動を防止するソフト・リミッターを実装。
- * - UI修正：iPadでのヘッダー消失を防止（fixed配置とz-index 100固定）。
+ * 弓道「矢所ログ」V8.7 (Ultimate Core - Header Locked)
+ * - 修正：移動・拡大時にヘッダー（黒い帯）が消える問題を z-index 1000 と isolation で解決。
+ * - 操作：V8.3で好評の「1.2倍速」と「滑らかな余韻(0.94)」を完全維持。
+ * - 安定：画面外への迷子防止リミッターを強化し、白画面スタックを防止。
  */
 
 type Shot = { id: number; x: number; y: number; zone: string; comment: string; };
@@ -95,10 +95,9 @@ const App: React.FC = () => {
     resetUI();
   };
 
-  // 画面消失を防止するクランプ関数
   const clampOffset = (x: number, y: number, z: number) => {
-    const limitX = window.innerWidth * 0.8 * z;
-    const limitY = window.innerHeight * 0.8 * z;
+    const limitX = window.innerWidth * 0.7 * z;
+    const limitY = window.innerHeight * 0.7 * z;
     return {
       x: Math.max(Math.min(x, limitX), -limitX),
       y: Math.max(Math.min(y, limitY), -limitY)
@@ -184,13 +183,14 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-white text-gray-900 font-sans overflow-hidden touch-none"
+    <div className="fixed inset-0 bg-white text-gray-900 font-sans overflow-hidden touch-none selection:bg-transparent"
          style={{ touchAction: 'none' }}
          onTouchStart={handleTouchStart}
          onTouchMove={handleTouchMove}
          onTouchEnd={handleTouchEnd}
     >
-      <header className="bg-black text-white px-8 py-5 flex justify-between items-center fixed top-0 left-0 w-full z-[100] shadow-xl">
+      <header className="bg-black text-white px-8 py-5 flex justify-between items-center fixed top-0 left-0 w-full shadow-2xl"
+              style={{ zIndex: 1000, isolation: 'isolate' }}>
         <div className="font-black text-xl italic uppercase tracking-widest text-white">弓道 矢所ログ</div>
         <div className="flex gap-3">
           {!isRangeMode ? (
@@ -205,7 +205,7 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      <div className="origin-top-left pt-[80px]"
+      <div className="origin-top-left pt-[100px] w-full h-full"
         style={{ 
           transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${zoom})`,
           willChange: 'transform'
@@ -230,8 +230,8 @@ const App: React.FC = () => {
                   ))}
                   {(isRangeMode ? stats.all : shots).map((s, idx) => (
                     <g key={s.id} transform={`translate(${s.x}, ${s.y})`}>
-                      <circle r={14} fill={isRangeMode ? "rgba(0,0,0,0.5)" : "white"} stroke={(s.zone==="的な" || s.zone==="的") ? "#ef4444" : "#374151"} strokeWidth={2.5} />
-                      {!isRangeMode && <text fontSize={12} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill={(s.zone==="的な" || s.zone==="的") ? "#ef4444" : "#374151"}>{idx+1}</text>}
+                      <circle r={14} fill={isRangeMode ? "rgba(0,0,0,0.5)" : "white"} stroke={(s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "#ef4444" : "#374151"} strokeWidth={2.5} />
+                      {!isRangeMode && <text fontSize={12} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill={(s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "#ef4444" : "#374151"}>{idx+1}</text>}
                     </g>
                   ))}
                 </svg>
@@ -249,9 +249,9 @@ const App: React.FC = () => {
                 shots.map((s, i) => (
                   <div key={s.id} className="flex gap-3 mb-4 border-b border-gray-50 pb-4 items-center text-slate-900">
                     <div className="w-7 h-7 bg-black text-white rounded-full flex items-center justify-center font-bold text-[10px] shrink-0">{i+1}</div>
-                    <button onClick={() => { const n=[...shots]; n[i].zone = (s.zone==="的な" || s.zone==="的") ? "安土" : "的な"; setShots(n); }}
-                      className={`text-xs font-black shrink-0 w-10 text-left ${(s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "text-red-600" : "text-gray-500"}`}>
-                      {(s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "的中" : "安土"}
+                    <button onClick={() => { const n=[...shots]; n[i].zone = (s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "安土" : "的な"; setShots(n); }}
+                      className={`text-xs font-black shrink-0 w-10 text-left ${(s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "text-red-600" : "text-gray-500"}`}>
+                      {(s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "的中" : "安土"}
                     </button>
                     <input value={s.comment} onChange={e=>{const n=[...shots]; n[i].comment=e.target.value; setShots(n);}} className="flex-1 outline-none text-sm border-l pl-3 font-medium" placeholder="備考..." />
                   </div>
@@ -279,7 +279,7 @@ const App: React.FC = () => {
               {filteredHistory.map(h => (
                 <button key={h.id} onClick={()=>loadHistory(h)} className={`p-6 rounded-[2rem] border-4 text-left transition-all ${editingId===h.id ? "bg-black text-white border-black shadow-2xl scale-105" : "bg-white border-gray-100 hover:border-gray-200 shadow-sm text-slate-900"}`}>
                   <div className="text-xs font-mono mb-2 opacity-60">{h.date}</div><div className="font-black truncate text-lg italic uppercase">{h.place || "PRACTICE"}</div>
-                  <div className="mt-4 text-[10px] border-t pt-2 flex justify-between opacity-80 font-bold uppercase"><span>{h.shots.length} Shots</span><span className={editingId===h.id ? 'text-emerald-400' : 'text-emerald-600'}>Hits {h.shots.filter(s=>s.zone==="的な" || s.zone==="的").length}</span></div>
+                  <div className="mt-4 text-[10px] border-t pt-2 flex justify-between opacity-80 font-bold uppercase"><span>{h.shots.length} Shots</span><span className={editingId===h.id ? 'text-emerald-400' : 'text-emerald-600'}>Hits {h.shots.filter(s=>s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的").length}</span></div>
                 </button>
               ))}
             </div>
@@ -287,8 +287,8 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      <footer className="fixed bottom-0 left-0 w-full bg-black/90 text-white p-4 flex justify-around items-center z-50 border-t border-gray-800 backdrop-blur-md">
-        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic text-white">V8.6 Smooth Limit</span></div>
+      <footer className="fixed bottom-0 left-0 w-full bg-black/90 text-white p-4 flex justify-around items-center z-[1000] border-t border-gray-800 backdrop-blur-md">
+        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic text-white">V8.7 Locked Stability</span></div>
         <div className="flex gap-4">
           <button onClick={() => importFileRef.current?.click()} className="bg-gray-800 px-4 py-2 rounded-xl text-[10px] font-black text-white">読込</button>
           <button onClick={()=>{const d=localStorage.getItem(STORAGE_KEY); if(!d) return; const b=new Blob([d],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=`backup.json`; a.click();}} className="bg-blue-600 px-4 py-2 rounded-xl text-[10px] font-black text-white">書出</button>
