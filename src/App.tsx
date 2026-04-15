@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Undo, Save, Calendar, Database, Upload, RefreshCw, BarChart2, X, Trash2 } from "lucide-react";
 /**
- * 弓道「矢所ログ」V8.1 (UX & Data Integrity - Fix)
- * - 操作感：iPadでの画面移動速度をV8.0から20%向上。
- * - 判定：過去データの「的」表記にも対応し、的中を正確に集計。
- * - 修正機能：Shots Noteの判定（的中/安土）をタップで手動切り替え可能に。
+ * 弓道「矢所ログ」V8.2 (Ultimate Core - Inertia Boost)
+ * - 操作感：V8.1の「1.2倍速」を維持しつつ、指を離した後の「慣性移動（余韻）」を実装。
+ * - 判定：過去データの「的」「的な」の両方に対応し、タップでの手動切り替えも完備。
+ * - 安定性：慣性移動中の新規タッチによる即時停止（ブレーキ）機能を搭載。
  */
 
 type Shot = { id: number; x: number; y: number; zone: string; comment: string; };
@@ -21,8 +21,7 @@ const getAIAnalysis = (shots: Shot[]) => {
   if (shots.length === 0) return "データがありません。";
   const avgX = shots.reduce((acc, s) => acc + s.x, 0) / shots.length;
   const avgY = shots.reduce((acc, s) => acc + s.y, 0) / shots.length;
-  // 過去データの「的に」「的」の両方をカウント
-  const hits = shots.filter(s => s.zone === "的な" || s.zone === "的な" || s.zone === "的").length;
+  const hits = shots.filter(s => s.zone === "的な" || s.zone === "的").length;
   const hitRate = (hits / shots.length) * 100;
   let report = `【AI矢所分析】\n\n`;
   if (avgX > 15) report += `・「右逸」傾向。妻手の緩みに注意。\n\n`;
@@ -58,6 +57,10 @@ const App: React.FC = () => {
   const hasMovedRef = useRef(false);
   const isMultiTouchRef = useRef(false);
 
+  // 慣性移動用のRef
+  const velocityRef = useRef({ x: 0, y: 0 });
+  const inertiaRequestRef = useRef<number | null>(null);
+
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) setHistory(JSON.parse(saved).sort((a: any, b: any) => b.date.localeCompare(a.date)));
@@ -67,8 +70,7 @@ const App: React.FC = () => {
 
   const stats = useMemo(() => {
     const all = filteredHistory.flatMap(h => h.shots);
-    // 過去データの「的」もカウント対象に含める
-    const hits = all.filter(s => s.zone === "的な" || s.zone === "的").length;
+    const hits = all.filter(s => s.zone === "的な" || s.zone === "的な" || s.zone === "的な" || s.zone === "的").length;
     return { total: all.length, hits, rate: all.length > 0 ? ((hits / all.length) * 100).toFixed(1) : "0.0", all };
   }, [filteredHistory]);
 
@@ -97,7 +99,28 @@ const App: React.FC = () => {
     resetUI();
   };
 
+  // 慣性アニメーションのループ関数
+  const applyInertia = () => {
+    if (Math.abs(velocityRef.current.x) < 0.2 && Math.abs(velocityRef.current.y) < 0.2) {
+      if (inertiaRequestRef.current) cancelAnimationFrame(inertiaRequestRef.current);
+      return;
+    }
+    setOffset(prev => ({
+      x: prev.x + velocityRef.current.x,
+      y: prev.y + velocityRef.current.y
+    }));
+    velocityRef.current.x *= 0.92; // 摩擦係数（余韻の長さ調整）
+    velocityRef.current.y *= 0.92;
+    inertiaRequestRef.current = requestAnimationFrame(applyInertia);
+  };
+
   const handleTouchStart = (e: React.TouchEvent) => {
+    // 新しいタッチが始まったら慣性を止める（ブレーキ）
+    if (inertiaRequestRef.current) {
+      cancelAnimationFrame(inertiaRequestRef.current);
+      inertiaRequestRef.current = null;
+    }
+    velocityRef.current = { x: 0, y: 0 };
     hasMovedRef.current = false;
     isMultiTouchRef.current = e.touches.length > 1;
     if (e.touches.length === 2) {
@@ -126,11 +149,20 @@ const App: React.FC = () => {
       }
       touchDistRef.current = dist;
     } else if (e.touches.length === 1) {
-      // V7.1のロジックに1.2倍の感度を注入して高速化
       const dx = (e.touches[0].clientX - lastTouchRef.current.x) * 1.2;
       const dy = (e.touches[0].clientY - lastTouchRef.current.y) * 1.2;
+      velocityRef.current = { x: dx, y: dy }; // 速度を記録
       setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
       lastTouchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (!isMultiTouchRef.current && !hasMovedRef.current) {
+      handleInteraction(e);
+    } else if (hasMovedRef.current && !isMultiTouchRef.current) {
+      // 指を離したときに速度があれば慣性移動を開始
+      inertiaRequestRef.current = requestAnimationFrame(applyInertia);
     }
   };
 
@@ -152,7 +184,7 @@ const App: React.FC = () => {
          style={{ touchAction: 'none' }}
          onTouchStart={handleTouchStart}
          onTouchMove={handleTouchMove}
-         onTouchEnd={(e) => { if (!isMultiTouchRef.current && !hasMovedRef.current) handleInteraction(e); }}
+         onTouchEnd={handleTouchEnd}
     >
       <header className="bg-black text-white px-8 py-5 flex justify-between items-center sticky top-0 z-50 shadow-xl">
         <div className="font-black text-xl italic uppercase tracking-widest">弓道 矢所ログ</div>
@@ -195,8 +227,8 @@ const App: React.FC = () => {
                   ))}
                   {(isRangeMode ? stats.all : shots).map((s, idx) => (
                     <g key={s.id} transform={`translate(${s.x}, ${s.y})`}>
-                      <circle r={14} fill={isRangeMode ? "rgba(0,0,0,0.5)" : "white"} stroke={(s.zone==="的な" || s.zone==="的")?"#ef4444":"#374151"} strokeWidth={2.5} />
-                      {!isRangeMode && <text fontSize={12} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill={(s.zone==="的な" || s.zone==="分")?"#ef4444":"#374151"}>{idx+1}</text>}
+                      <circle r={14} fill={isRangeMode ? "rgba(0,0,0,0.5)" : "white"} stroke={(s.zone==="的な" || s.zone==="的") ? "#ef4444" : "#374151"} strokeWidth={2.5} />
+                      {!isRangeMode && <text fontSize={12} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill={(s.zone==="的な" || s.zone==="的") ? "#ef4444" : "#374151"}>{idx+1}</text>}
                     </g>
                   ))}
                 </svg>
@@ -215,10 +247,10 @@ const App: React.FC = () => {
                   <div key={s.id} className="flex gap-3 mb-4 border-b border-gray-50 pb-4 items-center text-slate-900">
                     <div className="w-7 h-7 bg-black text-white rounded-full flex items-center justify-center font-bold text-[10px] shrink-0">{i+1}</div>
                     <button 
-                      onClick={() => { const n=[...shots]; n[i].zone = (s.zone==="的な" || s.zone==="的") ? "安土" : "的な"; setShots(n); }}
-                      className={`text-xs font-black shrink-0 w-10 text-left ${(s.zone==="的な" || s.zone==="的")?"text-red-600":"text-gray-500"}`}
+                      onClick={() => { const n=[...shots]; n[i].zone = (s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "安土" : "的な"; setShots(n); }}
+                      className={`text-xs font-black shrink-0 w-10 text-left ${(s.zone==="的な" || s.zone==="的") ? "text-red-600" : "text-gray-500"}`}
                     >
-                      {(s.zone==="的な" || s.zone==="的な" || s.zone==="的")?"的中":"安土"}
+                      {(s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "的中" : "安土"}
                     </button>
                     <input value={s.comment} onChange={e=>{const n=[...shots]; n[i].comment=e.target.value; setShots(n);}} className="flex-1 outline-none text-sm border-l pl-3 font-medium" placeholder="備考..." />
                   </div>
@@ -255,7 +287,7 @@ const App: React.FC = () => {
       </div>
 
       <footer className="fixed bottom-0 left-0 w-full bg-black/90 text-white p-4 flex justify-around items-center z-50 border-t border-gray-800 backdrop-blur-md">
-        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic text-white">V8.1 Complete Stability</span></div>
+        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic text-white">V8.2 Inertia Complete</span></div>
         <div className="flex gap-4">
           <button onClick={() => importFileRef.current?.click()} className="bg-gray-800 px-4 py-2 rounded-xl text-[10px] font-black text-white">読込</button>
           <button onClick={()=>{const d=localStorage.getItem(STORAGE_KEY); if(!d) return; const b=new Blob([d],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=`backup.json`; a.click();}} className="bg-blue-600 px-4 py-2 rounded-xl text-[10px] font-black text-white">書出</button>
