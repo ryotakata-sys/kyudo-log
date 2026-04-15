@@ -2,10 +2,11 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Undo, Save, Calendar, Database, Upload, RefreshCw, BarChart2, X, Trash2 } from "lucide-react";
 
 /**
- * 弓道「矢所ログ」V8.7 (Ultimate Core - Header Locked)
- * - 修正：移動・拡大時にヘッダー（黒い帯）が消える問題を z-index 1000 と isolation で解決。
- * - 操作：V8.3で好評の「1.2倍速」と「滑らかな余韻(0.94)」を完全維持。
- * - 安定：画面外への迷子防止リミッターを強化し、白画面スタックを防止。
+ * 弓道「矢所ログ」V8.8 (Ultimate Core - Smart Anchor)
+ * - 解決：画面外への迷子防止。1.0倍に戻すと自動で中央に吸着するスナップ機能を実装。
+ * - 修正：V8.7で発生した「下までスクロールできない」問題を、非対称リミッターで解決。
+ * - 操作：1.2倍速の移動と、摩擦0.94の滑らかな余韻を維持。
+ * - 構造：z-index 1000のヘッダーで、拡大・移動中も操作系を完全保証。
  */
 
 type Shot = { id: number; x: number; y: number; zone: string; comment: string; };
@@ -95,12 +96,15 @@ const App: React.FC = () => {
     resetUI();
   };
 
+  // 改良版リミッター：下方向へのスクロールを広く許可しつつ、迷子を防止
   const clampOffset = (x: number, y: number, z: number) => {
-    const limitX = window.innerWidth * 0.7 * z;
-    const limitY = window.innerHeight * 0.7 * z;
+    if (z <= 1.02) return { x: 0, y: 0 }; // ほぼ等倍なら原点に強制固定
+    const limitX = window.innerWidth * 0.9 * z;
+    const limitY_Top = window.innerHeight * 0.3 * z; // 上方向は控えめ
+    const limitY_Bottom = -5000; // 下方向（履歴アーカイブ側）は広く許可
     return {
       x: Math.max(Math.min(x, limitX), -limitX),
-      y: Math.max(Math.min(y, limitY), -limitY)
+      y: Math.max(Math.min(y, limitY_Top), limitY_Bottom)
     };
   };
 
@@ -143,14 +147,15 @@ const App: React.FC = () => {
       const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
       const delta = dist / touchDistRef.current;
       const nextZoom = Math.min(Math.max(zoom * delta, 1.0), 5);
-      if (nextZoom !== zoom) {
-        setOffset(prev => {
-          const rawX = centerX - (centerX - prev.x) * (nextZoom / zoom);
-          const rawY = centerY - (centerY - prev.y) * (nextZoom / zoom);
-          return clampOffset(rawX, rawY, nextZoom);
-        });
-        setZoom(nextZoom);
-      }
+      
+      setOffset(prev => {
+        // ズームを1.0xに近づけたら位置を自動リセット
+        if (nextZoom <= 1.02) return { x: 0, y: 0 };
+        const rawX = centerX - (centerX - prev.x) * (nextZoom / zoom);
+        const rawY = centerY - (centerY - prev.y) * (nextZoom / zoom);
+        return clampOffset(rawX, rawY, nextZoom);
+      });
+      setZoom(nextZoom);
       touchDistRef.current = dist;
     } else if (e.touches.length === 1) {
       const dx = (e.touches[0].clientX - lastTouchRef.current.x) * 1.2;
@@ -164,7 +169,7 @@ const App: React.FC = () => {
   const handleTouchEnd = (e: React.TouchEvent) => {
     if (!isMultiTouchRef.current && !hasMovedRef.current) {
       handleInteraction(e);
-    } else if (hasMovedRef.current && !isMultiTouchRef.current) {
+    } else if (hasMovedRef.current && !isMultiTouchRef.current && zoom > 1.02) {
       inertiaRequestRef.current = requestAnimationFrame(applyInertia);
     }
   };
@@ -183,7 +188,7 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 bg-white text-gray-900 font-sans overflow-hidden touch-none selection:bg-transparent"
+    <div className="fixed inset-0 bg-white text-gray-900 font-sans overflow-hidden touch-none"
          style={{ touchAction: 'none' }}
          onTouchStart={handleTouchStart}
          onTouchMove={handleTouchMove}
@@ -230,7 +235,7 @@ const App: React.FC = () => {
                   ))}
                   {(isRangeMode ? stats.all : shots).map((s, idx) => (
                     <g key={s.id} transform={`translate(${s.x}, ${s.y})`}>
-                      <circle r={14} fill={isRangeMode ? "rgba(0,0,0,0.5)" : "white"} stroke={(s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "#ef4444" : "#374151"} strokeWidth={2.5} />
+                      <circle r={14} fill={isRangeMode ? "rgba(0,0,0,0.5)" : "white"} stroke={(s.zone==="的な" || s.zone==="的") ? "#ef4444" : "#374151"} strokeWidth={2.5} />
                       {!isRangeMode && <text fontSize={12} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill={(s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "#ef4444" : "#374151"}>{idx+1}</text>}
                     </g>
                   ))}
@@ -288,7 +293,7 @@ const App: React.FC = () => {
       </div>
 
       <footer className="fixed bottom-0 left-0 w-full bg-black/90 text-white p-4 flex justify-around items-center z-[1000] border-t border-gray-800 backdrop-blur-md">
-        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic text-white">V8.7 Locked Stability</span></div>
+        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic text-white">V8.8 Smart Anchor</span></div>
         <div className="flex gap-4">
           <button onClick={() => importFileRef.current?.click()} className="bg-gray-800 px-4 py-2 rounded-xl text-[10px] font-black text-white">読込</button>
           <button onClick={()=>{const d=localStorage.getItem(STORAGE_KEY); if(!d) return; const b=new Blob([d],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=`backup.json`; a.click();}} className="bg-blue-600 px-4 py-2 rounded-xl text-[10px] font-black text-white">書出</button>
