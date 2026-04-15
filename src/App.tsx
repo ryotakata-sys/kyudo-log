@@ -2,10 +2,10 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Undo, Save, Calendar, Database, Upload, RefreshCw, BarChart2, X, Trash2 } from "lucide-react";
 
 /**
- * 弓道「矢所ログ」V8.5 (Ultimate Core - Smart Snap)
- * - 解決：白画面迷子問題を「ズーム連動型ロック」で根本解決。
- * - 操作感：等倍(1.0x)時は中央固定、拡大時のみ1.2倍速の軽快な移動(余韻0.94)を許可。
- * - UI安定：fixedヘッダーを維持し、どんな操作時も操作パネルを見失わない。
+ * 弓道「矢所ログ」V8.6 (Ultimate Core - Smooth Limit)
+ * - 解決：V8.5の操作ロックを廃止。V8.3の自由な移動速度(1.2倍)と余韻(0.94)を復活。
+ * - 安定：画面外への無限移動を防止するソフト・リミッターを実装。
+ * - UI修正：iPadでのヘッダー消失を防止（fixed配置とz-index 100固定）。
  */
 
 type Shot = { id: number; x: number; y: number; zone: string; comment: string; };
@@ -76,7 +76,7 @@ const App: React.FC = () => {
     const newId = editingId || Date.now();
     const newH = editingId ?
       history.map(h => h.id === editingId ? { ...h, date, place, note, shots } : h) : [{ id: newId, date, place, note, shots }, ...history];
-    const sorted = [...newH].sort((a: any, b: any) => b.date.localeCompare(a.date));
+    const sorted = [...newH].sort((a, b) => b.date.localeCompare(a.date));
     setHistory(sorted);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(sorted));
     setEditingId(newId);
@@ -95,25 +95,25 @@ const App: React.FC = () => {
     resetUI();
   };
 
+  // 画面消失を防止するクランプ関数
+  const clampOffset = (x: number, y: number, z: number) => {
+    const limitX = window.innerWidth * 0.8 * z;
+    const limitY = window.innerHeight * 0.8 * z;
+    return {
+      x: Math.max(Math.min(x, limitX), -limitX),
+      y: Math.max(Math.min(y, limitY), -limitY)
+    };
+  };
+
   const applyInertia = () => {
     if (Math.abs(velocityRef.current.x) < 0.2 && Math.abs(velocityRef.current.y) < 0.2) {
       if (inertiaRequestRef.current) cancelAnimationFrame(inertiaRequestRef.current);
       return;
     }
     setOffset(prev => {
-      // 1.0x（またはそれに近い）状態なら原点(0,0)に強制スナップし慣性を止める
-      if (zoom <= 1.02) return { x: 0, y: 0 };
-      
       const nextX = prev.x + velocityRef.current.x;
       const nextY = prev.y + velocityRef.current.y;
-      
-      // 極端な画面外移動の緩やかな制限（windowサイズを基準に動的に計算）
-      const boundX = window.innerWidth * zoom;
-      const boundY = window.innerHeight * zoom;
-      return {
-        x: Math.max(Math.min(nextX, boundX), -boundX),
-        y: Math.max(Math.min(nextY, boundY), -boundY)
-      };
+      return clampOffset(nextX, nextY, zoom);
     });
     velocityRef.current.x *= 0.94;
     velocityRef.current.y *= 0.94;
@@ -138,44 +138,26 @@ const App: React.FC = () => {
     const target = e.target as HTMLElement;
     if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
     hasMovedRef.current = true;
-    
     if (e.touches.length === 2 && touchDistRef.current !== null) {
       const centerX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
       const centerY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
       const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
       const delta = dist / touchDistRef.current;
       const nextZoom = Math.min(Math.max(zoom * delta, 1.0), 5);
-      
       if (nextZoom !== zoom) {
         setOffset(prev => {
-          // ズームアウトして1.0xに戻るなら位置をリセット
-          if (nextZoom <= 1.01) return { x: 0, y: 0 };
-          return {
-            x: centerX - (centerX - prev.x) * (nextZoom / zoom),
-            y: centerY - (centerY - prev.y) * (nextZoom / zoom)
-          };
+          const rawX = centerX - (centerX - prev.x) * (nextZoom / zoom);
+          const rawY = centerY - (centerY - prev.y) * (nextZoom / zoom);
+          return clampOffset(rawX, rawY, nextZoom);
         });
         setZoom(nextZoom);
       }
       touchDistRef.current = dist;
     } else if (e.touches.length === 1) {
-      // ズームが等倍の時は、矢所図を移動させない（迷子防止）
-      if (zoom <= 1.02) return;
-
       const dx = (e.touches[0].clientX - lastTouchRef.current.x) * 1.2;
       const dy = (e.touches[0].clientY - lastTouchRef.current.y) * 1.2;
       velocityRef.current = { x: dx, y: dy };
-      
-      setOffset(prev => {
-        const nextX = prev.x + dx;
-        const nextY = prev.y + dy;
-        const boundX = window.innerWidth * zoom;
-        const boundY = window.innerHeight * zoom;
-        return {
-          x: Math.max(Math.min(nextX, boundX), -boundX),
-          y: Math.max(Math.min(nextY, boundY), -boundY)
-        };
-      });
+      setOffset(prev => clampOffset(prev.x + dx, prev.y + dy, zoom));
       lastTouchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
     }
   };
@@ -183,7 +165,7 @@ const App: React.FC = () => {
   const handleTouchEnd = (e: React.TouchEvent) => {
     if (!isMultiTouchRef.current && !hasMovedRef.current) {
       handleInteraction(e);
-    } else if (hasMovedRef.current && !isMultiTouchRef.current && zoom > 1.02) {
+    } else if (hasMovedRef.current && !isMultiTouchRef.current) {
       inertiaRequestRef.current = requestAnimationFrame(applyInertia);
     }
   };
@@ -267,9 +249,9 @@ const App: React.FC = () => {
                 shots.map((s, i) => (
                   <div key={s.id} className="flex gap-3 mb-4 border-b border-gray-50 pb-4 items-center text-slate-900">
                     <div className="w-7 h-7 bg-black text-white rounded-full flex items-center justify-center font-bold text-[10px] shrink-0">{i+1}</div>
-                    <button onClick={() => { const n=[...shots]; n[i].zone = (s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "安土" : "的な"; setShots(n); }}
-                      className={`text-xs font-black shrink-0 w-10 text-left ${(s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "text-red-600" : "text-gray-500"}`}>
-                      {(s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "的中" : "安土"}
+                    <button onClick={() => { const n=[...shots]; n[i].zone = (s.zone==="的な" || s.zone==="的") ? "安土" : "的な"; setShots(n); }}
+                      className={`text-xs font-black shrink-0 w-10 text-left ${(s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "text-red-600" : "text-gray-500"}`}>
+                      {(s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "的中" : "安土"}
                     </button>
                     <input value={s.comment} onChange={e=>{const n=[...shots]; n[i].comment=e.target.value; setShots(n);}} className="flex-1 outline-none text-sm border-l pl-3 font-medium" placeholder="備考..." />
                   </div>
@@ -306,7 +288,7 @@ const App: React.FC = () => {
       </div>
 
       <footer className="fixed bottom-0 left-0 w-full bg-black/90 text-white p-4 flex justify-around items-center z-50 border-t border-gray-800 backdrop-blur-md">
-        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic text-white">V8.5 Smart Snap System</span></div>
+        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic text-white">V8.6 Smooth Limit</span></div>
         <div className="flex gap-4">
           <button onClick={() => importFileRef.current?.click()} className="bg-gray-800 px-4 py-2 rounded-xl text-[10px] font-black text-white">読込</button>
           <button onClick={()=>{const d=localStorage.getItem(STORAGE_KEY); if(!d) return; const b=new Blob([d],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=`backup.json`; a.click();}} className="bg-blue-600 px-4 py-2 rounded-xl text-[10px] font-black text-white">書出</button>
