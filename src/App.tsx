@@ -2,10 +2,10 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Undo, Save, Calendar, Database, Upload, RefreshCw, BarChart2, X, Trash2 } from "lucide-react";
 
 /**
- * 弓道「矢所ログ」V8.3 (Ultimate Core - Complete Fix)
- * - 操作感：余韻（慣性）をV8.2からさらに延長し、より軽い滑りを実現（摩擦0.94）。
- * - UI修正：iPadでのヘッダー消失を防止（fixed配置とz-index 100固定）。
- * - 判定：過去の「的」「的な」の両方を的中として扱い、タップで修正可能。
+ * 弓道「矢所ログ」V8.4 (Ultimate Core - Boundary Lock)
+ * - 操作感：余韻（慣性）の軽快さを維持しつつ、画面外へ消え去らないよう移動範囲を制限。
+ * - UI修正：iPadでのヘッダー固定表示を完全に保証（fixed + z-100）。
+ * - 判定：過去の「的」「的な」の両方を的中として扱い、タップで修正可能な機能を完備。
  */
 
 type Shot = { id: number; x: number; y: number; zone: string; comment: string; };
@@ -22,7 +22,7 @@ const getAIAnalysis = (shots: Shot[]) => {
   if (shots.length === 0) return "データがありません。";
   const avgX = shots.reduce((acc, s) => acc + s.x, 0) / shots.length;
   const avgY = shots.reduce((acc, s) => acc + s.y, 0) / shots.length;
-  const hits = shots.filter(s => s.zone === "的な" || s.zone === "的な" || s.zone === "的").length;
+  const hits = shots.filter(s => s.zone === "的な" || s.zone === "的").length;
   const hitRate = (hits / shots.length) * 100;
   let report = `【AI矢所分析】\n\n`;
   if (avgX > 15) report += `・「右逸」傾向。妻手の緩みに注意。\n\n`;
@@ -100,10 +100,17 @@ const App: React.FC = () => {
       if (inertiaRequestRef.current) cancelAnimationFrame(inertiaRequestRef.current);
       return;
     }
-    setOffset(prev => ({
-      x: prev.x + velocityRef.current.x,
-      y: prev.y + velocityRef.current.y
-    }));
+    setOffset(prev => {
+      const nextX = prev.x + velocityRef.current.x;
+      const nextY = prev.y + velocityRef.current.y;
+      // 表示消失防止の境界制限
+      const limX = window.innerWidth * 0.8;
+      const limY = window.innerHeight * 0.8;
+      return {
+        x: Math.max(Math.min(nextX, limX), -limX * zoom),
+        y: Math.max(Math.min(nextY, limY), -limY * zoom)
+      };
+    });
     velocityRef.current.x *= 0.94;
     velocityRef.current.y *= 0.94;
     inertiaRequestRef.current = requestAnimationFrame(applyInertia);
@@ -145,7 +152,17 @@ const App: React.FC = () => {
       const dx = (e.touches[0].clientX - lastTouchRef.current.x) * 1.2;
       const dy = (e.touches[0].clientY - lastTouchRef.current.y) * 1.2;
       velocityRef.current = { x: dx, y: dy };
-      setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
+      setOffset(prev => {
+        const nextX = prev.x + dx;
+        const nextY = prev.y + dy;
+        // 表示消失防止の境界制限
+        const limX = window.innerWidth * 0.8;
+        const limY = window.innerHeight * 0.8;
+        return {
+          x: Math.max(Math.min(nextX, limX), -limX * zoom),
+          y: Math.max(Math.min(nextY, limY), -limY * zoom)
+        };
+      });
       lastTouchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
     }
   };
@@ -219,7 +236,7 @@ const App: React.FC = () => {
                   {(isRangeMode ? stats.all : shots).map((s, idx) => (
                     <g key={s.id} transform={`translate(${s.x}, ${s.y})`}>
                       <circle r={14} fill={isRangeMode ? "rgba(0,0,0,0.5)" : "white"} stroke={(s.zone==="的な" || s.zone==="的") ? "#ef4444" : "#374151"} strokeWidth={2.5} />
-                      {!isRangeMode && <text fontSize={12} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill={(s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "#ef4444" : "#374151"}>{idx+1}</text>}
+                      {!isRangeMode && <text fontSize={12} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill={(s.zone==="的な" || s.zone==="的") ? "#ef4444" : "#374151"}>{idx+1}</text>}
                     </g>
                   ))}
                 </svg>
@@ -238,8 +255,8 @@ const App: React.FC = () => {
                   <div key={s.id} className="flex gap-3 mb-4 border-b border-gray-50 pb-4 items-center text-slate-900">
                     <div className="w-7 h-7 bg-black text-white rounded-full flex items-center justify-center font-bold text-[10px] shrink-0">{i+1}</div>
                     <button onClick={() => { const n=[...shots]; n[i].zone = (s.zone==="的な" || s.zone==="的") ? "安土" : "的な"; setShots(n); }}
-                      className={`text-xs font-black shrink-0 w-10 text-left ${(s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "text-red-600" : "text-gray-500"}`}>
-                      {(s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "的中" : "安土"}
+                      className={`text-xs font-black shrink-0 w-10 text-left ${(s.zone==="的な" || s.zone==="的") ? "text-red-600" : "text-gray-500"}`}>
+                      {(s.zone==="的な" || s.zone==="的") ? "的中" : "安土"}
                     </button>
                     <input value={s.comment} onChange={e=>{const n=[...shots]; n[i].comment=e.target.value; setShots(n);}} className="flex-1 outline-none text-sm border-l pl-3 font-medium" placeholder="備考..." />
                   </div>
@@ -267,7 +284,7 @@ const App: React.FC = () => {
               {filteredHistory.map(h => (
                 <button key={h.id} onClick={()=>loadHistory(h)} className={`p-6 rounded-[2rem] border-4 text-left transition-all ${editingId===h.id ? "bg-black text-white border-black shadow-2xl scale-105" : "bg-white border-gray-100 hover:border-gray-200 shadow-sm text-slate-900"}`}>
                   <div className="text-xs font-mono mb-2 opacity-60">{h.date}</div><div className="font-black truncate text-lg italic uppercase">{h.place || "PRACTICE"}</div>
-                  <div className="mt-4 text-[10px] border-t pt-2 flex justify-between opacity-80 font-bold uppercase"><span>{h.shots.length} Shots</span><span className={editingId===h.id ? 'text-emerald-400' : 'text-emerald-600'}>Hits {h.shots.filter(s=>s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的").length}</span></div>
+                  <div className="mt-4 text-[10px] border-t pt-2 flex justify-between opacity-80 font-bold uppercase"><span>{h.shots.length} Shots</span><span className={editingId===h.id ? 'text-emerald-400' : 'text-emerald-600'}>Hits {h.shots.filter(s=>s.zone==="的な" || s.zone==="的").length}</span></div>
                 </button>
               ))}
             </div>
@@ -276,7 +293,7 @@ const App: React.FC = () => {
       </div>
 
       <footer className="fixed bottom-0 left-0 w-full bg-black/90 text-white p-4 flex justify-around items-center z-50 border-t border-gray-800 backdrop-blur-md">
-        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic text-white">V8.3 Complete stability</span></div>
+        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span className="text-[10px] font-mono text-gray-400 uppercase italic text-white">V8.4 Boundary Lock</span></div>
         <div className="flex gap-4">
           <button onClick={() => importFileRef.current?.click()} className="bg-gray-800 px-4 py-2 rounded-xl text-[10px] font-black text-white">読込</button>
           <button onClick={()=>{const d=localStorage.getItem(STORAGE_KEY); if(!d) return; const b=new Blob([d],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=`backup.json`; a.click();}} className="bg-blue-600 px-4 py-2 rounded-xl text-[10px] font-black text-white">書出</button>
