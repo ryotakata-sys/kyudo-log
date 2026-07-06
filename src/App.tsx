@@ -10,7 +10,7 @@ import { Undo, Save, Calendar, Database, Upload, RefreshCw, BarChart2, X, Trash2
  */
 
 type Shot = { id: number; x: number; y: number; zone: string; comment: string; };
-type HistoryRecord = { id: number; date: string; place: string; note: string; shots: Shot[]; };
+type HistoryRecord = { id: number; date: string; place: string; note: string; shots: Shot[]; goal?: string; goalAchieved?: boolean | null; goalMemo?: string; };
 
 const R = 50;
 const TARGET_SPACING = 9.6 * R;
@@ -41,6 +41,9 @@ const App: React.FC = () => {
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
   const [place, setPlace] = useState("");
   const [note, setNote] = useState("");
+  const [goal, setGoal] = useState("");
+  const [goalAchieved, setGoalAchieved] = useState<boolean | null>(null);
+  const [goalMemo, setGoalMemo] = useState("");
   const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [zoom, setZoom] = useState(1);
@@ -71,12 +74,12 @@ const App: React.FC = () => {
     return { total: all.length, hits, rate: all.length > 0 ? ((hits / all.length) * 100).toFixed(1) : "0.0", all };
   }, [filteredHistory]);
 
-  const resetUI = () => { setEditingId(null); setShots([]); setPlace(""); setNote(""); setZoom(1); setOffset({ x: 0, y: 0 }); };
+  const resetUI = () => { setEditingId(null); setShots([]); setPlace(""); setNote(""); setGoal(""); setGoalAchieved(null); setGoalMemo(""); setZoom(1); setOffset({ x: 0, y: 0 }); };
 
   const saveRecord = () => {
     const newId = editingId || Date.now();
     const newH = editingId ?
-      history.map(h => h.id === editingId ? { ...h, date, place, note, shots } : h) : [{ id: newId, date, place, note, shots }, ...history];
+      history.map(h => h.id === editingId ? { ...h, date, place, note, shots, goal, goalAchieved, goalMemo } : h) : [{ id: newId, date, place, note, shots, goal, goalAchieved, goalMemo }, ...history];
     const sorted = [...newH].sort((a, b) => b.date.localeCompare(a.date));
     setHistory(sorted);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(sorted));
@@ -85,7 +88,7 @@ const App: React.FC = () => {
   };
 
   const loadHistory = (h: HistoryRecord) => {
-    setIsRangeMode(false); setEditingId(h.id); setDate(h.date); setPlace(h.place); setNote(h.note); setShots(h.shots); setZoom(1); setOffset({x:0, y:0});
+    setIsRangeMode(false); setEditingId(h.id); setDate(h.date); setPlace(h.place); setNote(h.note); setShots(h.shots); setGoal(h.goal || ""); setGoalAchieved(h.goalAchieved ?? null); setGoalMemo(h.goalMemo || ""); setZoom(1); setOffset({x:0, y:0});
   };
 
   const deleteRecord = () => {
@@ -219,9 +222,27 @@ const App: React.FC = () => {
         <div className="p-8 pb-40">
           <main className="max-w-[95%] mx-auto grid lg:grid-cols-[1fr,400px] gap-8">
             <div className="space-y-6">
-              <section className="bg-gray-50 p-6 rounded-3xl border flex gap-10 shadow-sm">
-                <div><label className="text-[10px] font-black text-gray-400 block mb-1 uppercase tracking-widest">Date</label><input type="date" value={date} onChange={e=>setDate(e.target.value)} className="bg-transparent text-2xl font-black outline-none text-slate-900" /></div>
-                <div className="flex-1"><label className="text-[10px] font-black text-gray-400 block mb-1 uppercase tracking-widest">Place</label><input type="text" value={place} onChange={e=>setPlace(e.target.value)} className="bg-transparent text-2xl font-black outline-none w-full border-b text-slate-900" placeholder="稽古場所" /></div>
+              <section className="bg-gray-50 p-6 rounded-3xl border space-y-4 shadow-sm">
+                <div className="flex gap-10">
+                  <div><label className="text-[10px] font-black text-gray-400 block mb-1 uppercase tracking-widest">Date</label><input type="date" value={date} onChange={e=>setDate(e.target.value)} className="bg-transparent text-2xl font-black outline-none text-slate-900" /></div>
+                  <div className="flex-1"><label className="text-[10px] font-black text-gray-400 block mb-1 uppercase tracking-widest">Place</label><input type="text" value={place} onChange={e=>setPlace(e.target.value)} className="bg-transparent text-2xl font-black outline-none w-full border-b text-slate-900" placeholder="稽古場所" /></div>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-400 block mb-1 uppercase tracking-widest">Goal</label>
+                  <input type="text" value={goal} onChange={e=>setGoal(e.target.value)} className="bg-transparent text-lg font-bold outline-none w-full border-b text-slate-900" placeholder="本日の稽古目標" />
+                </div>
+                {goal && (
+                  <div className="pt-4 border-t border-gray-200">
+                    <label className="text-[10px] font-black text-gray-400 block mb-2 uppercase tracking-widest">Reflection (達成の有無とメモ)</label>
+                    <div className="flex gap-4 items-start">
+                      <div className="flex flex-col gap-2 shrink-0">
+                        <button onClick={() => setGoalAchieved(true)} className={`px-4 py-2 rounded-xl text-xs font-bold transition ${goalAchieved === true ? 'bg-emerald-600 text-white shadow-md' : 'bg-white border text-gray-500 hover:bg-gray-50'}`}>達成 ⭕️</button>
+                        <button onClick={() => setGoalAchieved(false)} className={`px-4 py-2 rounded-xl text-xs font-bold transition ${goalAchieved === false ? 'bg-red-600 text-white shadow-md' : 'bg-white border text-gray-500 hover:bg-gray-50'}`}>未達成 ❌</button>
+                      </div>
+                      <textarea value={goalMemo} onChange={e=>setGoalMemo(e.target.value)} className="flex-1 bg-white border border-gray-200 rounded-xl p-3 outline-none text-sm resize-none text-slate-900" placeholder="振り返りメモ..." rows={3} />
+                    </div>
+                  </div>
+                )}
               </section>
 
               <div className="relative rounded-[2.5rem] border-4 border-gray-100 overflow-hidden bg-gray-100 shadow-inner">
@@ -282,9 +303,17 @@ const App: React.FC = () => {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {filteredHistory.map(h => (
-                <button key={h.id} onClick={()=>loadHistory(h)} className={`p-6 rounded-[2rem] border-4 text-left transition-all ${editingId===h.id ? "bg-black text-white border-black shadow-2xl scale-105" : "bg-white border-gray-100 hover:border-gray-200 shadow-sm text-slate-900"}`}>
-                  <div className="text-xs font-mono mb-2 opacity-60">{h.date}</div><div className="font-black truncate text-lg italic uppercase">{h.place || "PRACTICE"}</div>
-                  <div className="mt-4 text-[10px] border-t pt-2 flex justify-between opacity-80 font-bold uppercase"><span>{h.shots.length} Shots</span><span className={editingId===h.id ? 'text-emerald-400' : 'text-emerald-600'}>Hits {h.shots.filter(s=>s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的").length}</span></div>
+                <button key={h.id} onClick={()=>loadHistory(h)} className={`p-6 rounded-[2rem] border-4 text-left transition-all flex flex-col justify-between ${editingId===h.id ? "bg-black text-white border-black shadow-2xl scale-105" : "bg-white border-gray-100 hover:border-gray-200 shadow-sm text-slate-900"}`}>
+                  <div className="w-full">
+                    <div className="flex justify-between items-start mb-2">
+                      <div className="text-xs font-mono opacity-60">{h.date}</div>
+                      {h.goal && (
+                        <div className="text-sm" title={h.goal}>{h.goalAchieved === true ? '⭕️' : h.goalAchieved === false ? '❌' : '➖'}</div>
+                      )}
+                    </div>
+                    <div className="font-black truncate text-lg italic uppercase">{h.place || "PRACTICE"}</div>
+                  </div>
+                  <div className="mt-4 text-[10px] border-t pt-2 flex justify-between opacity-80 font-bold uppercase w-full"><span>{h.shots.length} Shots</span><span className={editingId===h.id ? 'text-emerald-400' : 'text-emerald-600'}>Hits {h.shots.filter(s=>s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的").length}</span></div>
                 </button>
               ))}
             </div>
