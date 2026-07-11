@@ -22,26 +22,56 @@ const VIEW_W = ANDUCHI_W + 100;
 const VIEW_H = ANDUCHI_H + STAIRS_H + 100;
 const STORAGE_KEY = "kyudo-log-history";
 
-// 中央的を中心にしたゾーン（①〜⑥は的の外側の帯、計算しやすい R 倍数）
-const ZONE_ROW_H = R * 0.55;
-const ZONE_BAND_W = R * 1.85;
-const ZONE_8_DEPTH = R * 1.1;
+// 中央的を中心にしたゾーン（①〜⑧は的の外側、左右端は隣の的までの中間地点）
+const ZONE_HALF_W = TARGET_SPACING / 2;
+const ZONE_ROW_H = R * 0.65;
+
+type ZoneGeom = {
+  halfW: number;
+  cy: number;
+  innerTop: number;
+  innerBottom: number;
+  upperMidTop: number;
+  upperMidBottom: number;
+  lowerMidTop: number;
+  lowerMidBottom: number;
+  zone7Top: number;
+  zone8Bottom: number;
+};
+
+const getZoneGeom = (): ZoneGeom => {
+  const cy = TARGET_CY;
+  const rowH = ZONE_ROW_H;
+  return {
+    halfW: ZONE_HALF_W,
+    cy,
+    innerTop: cy - R,
+    innerBottom: cy + R,
+    upperMidTop: cy - R - rowH,
+    upperMidBottom: cy - R,
+    lowerMidTop: cy + R,
+    lowerMidBottom: cy + R + rowH,
+    zone7Top: -ANDUCHI_H / 2,
+    zone8Bottom: ANDUCHI_H / 2 + STAIRS_H,
+  };
+};
 
 type ZoneRect = { id: string; x0: number; y0: number; x1: number; y1: number };
 
 const getZoneRects = (): ZoneRect[] => {
-  const cy = TARGET_CY;
-  const rh = ZONE_ROW_H;
-  const bw = ZONE_BAND_W;
+  const {
+    halfW: hw, upperMidTop, upperMidBottom, lowerMidTop, lowerMidBottom,
+    zone7Top, zone8Bottom, innerTop, innerBottom,
+  } = getZoneGeom();
   return [
-    { id: "7", x0: -bw, y0: cy - R - rh * 2.8, x1: bw, y1: cy - R - rh },
-    { id: "5", x0: -bw, y0: cy - R - rh, x1: 0, y1: cy - R },
-    { id: "6", x0: 0, y0: cy - R - rh, x1: bw, y1: cy - R },
-    { id: "3", x0: -bw, y0: cy - R, x1: -R, y1: cy + R },
-    { id: "4", x0: R, y0: cy - R, x1: bw, y1: cy + R },
-    { id: "1", x0: -bw, y0: cy + R, x1: 0, y1: cy + R + rh },
-    { id: "2", x0: 0, y0: cy + R, x1: bw, y1: cy + R + rh },
-    { id: "8", x0: -bw, y0: cy + R + rh, x1: bw, y1: cy + R + rh + ZONE_8_DEPTH },
+    { id: "7", x0: -hw, y0: zone7Top, x1: hw, y1: upperMidTop },
+    { id: "5", x0: -hw, y0: upperMidTop, x1: 0, y1: upperMidBottom },
+    { id: "6", x0: 0, y0: upperMidTop, x1: hw, y1: upperMidBottom },
+    { id: "3", x0: -hw, y0: innerTop, x1: -R, y1: innerBottom },
+    { id: "4", x0: R, y0: innerTop, x1: hw, y1: innerBottom },
+    { id: "1", x0: -hw, y0: lowerMidTop, x1: 0, y1: lowerMidBottom },
+    { id: "2", x0: 0, y0: lowerMidTop, x1: hw, y1: lowerMidBottom },
+    { id: "8", x0: -hw, y0: lowerMidBottom, x1: hw, y1: zone8Bottom },
   ];
 };
 
@@ -63,11 +93,13 @@ const inRect = (x: number, y: number, r: ZoneRect) =>
 
 const getZone = (x: number, y: number, treatTargetAsHit = true): string => {
   if (treatTargetAsHit && isOnCenterTarget(x, y)) return "0";
-  if (y >= ANDUCHI_H / 2) return "8";
   for (const rect of getZoneRects()) {
     if (inRect(x, y, rect)) return rect.id;
   }
-  return "7";
+  const dx = x;
+  const dy = y - TARGET_CY;
+  if (Math.abs(dy) >= Math.abs(dx)) return dy < 0 ? "7" : "8";
+  return dx < 0 ? "3" : "4";
 };
 
 const zoneLabel = (zone: string) => ZONE_LABELS[zone] ?? zone;
@@ -124,19 +156,18 @@ const ZoneOverlay: React.FC<{ zoneCounts: Record<string, number>; total: number;
   const pct = (z: number) => total > 0 ? (zoneCounts[String(z)] / total) * 100 : 0;
   const fill = (z: number) => zoneIntensity(pct(z));
   const rects = getZoneRects();
-  const bw = ZONE_BAND_W;
-  const cy = TARGET_CY;
-  const rh = ZONE_ROW_H;
+  const g = getZoneGeom();
+  const { halfW: hw, cy, upperMidTop, upperMidBottom, lowerMidTop, lowerMidBottom, zone7Top, zone8Bottom } = g;
 
   const zoneLabelPos: Record<string, [number, number]> = {
-    "7": [0, (cy - R - rh * 2.8 + cy - R - rh) / 2],
-    "5": [(-bw - R) / 2, cy - R - rh / 2],
-    "6": [(R + bw) / 2, cy - R - rh / 2],
-    "3": [(-bw - R) / 2, cy],
-    "4": [(R + bw) / 2, cy],
-    "1": [(-bw - R) / 2, cy + R + rh / 2],
-    "2": [(R + bw) / 2, cy + R + rh / 2],
-    "8": [0, cy + R + rh + ZONE_8_DEPTH / 2],
+    "7": [0, (zone7Top + upperMidTop) / 2],
+    "5": [-hw / 2, (upperMidTop + upperMidBottom) / 2],
+    "6": [hw / 2, (upperMidTop + upperMidBottom) / 2],
+    "3": [(-hw - R) / 2, cy],
+    "4": [(hw + R) / 2, cy],
+    "1": [-hw / 2, (lowerMidTop + lowerMidBottom) / 2],
+    "2": [hw / 2, (lowerMidTop + lowerMidBottom) / 2],
+    "8": [0, (lowerMidBottom + zone8Bottom) / 2],
   };
 
   if (layer === "fills") {
@@ -145,7 +176,6 @@ const ZoneOverlay: React.FC<{ zoneCounts: Record<string, number>; total: number;
         {rects.map(r => (
           <rect key={`fill-${r.id}`} x={r.x0} y={r.y0} width={r.x1 - r.x0} height={r.y1 - r.y0} fill={fill(Number(r.id))} />
         ))}
-        <rect x={-bw} y={cy + R + rh + ZONE_8_DEPTH} width={bw * 2} height={ANDUCHI_H / 2 - (cy + R + rh + ZONE_8_DEPTH) + STAIRS_H} fill={fill(8)} />
         <circle cx={0} cy={cy} r={R} fill={fill(0)} />
       </g>
     );
@@ -156,7 +186,7 @@ const ZoneOverlay: React.FC<{ zoneCounts: Record<string, number>; total: number;
       {rects.map(r => (
         <rect key={`line-${r.id}`} x={r.x0} y={r.y0} width={r.x1 - r.x0} height={r.y1 - r.y0} fill="none" stroke="#dc2626" strokeWidth={1.5} />
       ))}
-      <rect x={-bw} y={cy - R - rh * 2.8} width={bw * 2} height={cy + R + rh + ZONE_8_DEPTH - (cy - R - rh * 2.8)} fill="none" stroke="#dc2626" strokeWidth={1.5} />
+      <rect x={-hw} y={zone7Top} width={hw * 2} height={zone8Bottom - zone7Top} fill="none" stroke="#dc2626" strokeWidth={1.5} />
       {Object.entries(zoneLabelPos).map(([z, [lx, ly]]) => (
         <g key={z}>
           <circle cx={lx} cy={ly} r={14} fill="white" stroke="#dc2626" strokeWidth={1.5} />
