@@ -18,16 +18,21 @@ const ANDUCHI_W = TARGET_SPACING * 2 + R * 4;
 const ANDUCHI_H = 8.8 * R;
 const STAIRS_H = 3.0 * R;
 const TARGET_CY = ANDUCHI_H / 3;
+const VIEW_W = ANDUCHI_W + 100;
+const VIEW_H = ANDUCHI_H + STAIRS_H + 100;
+const X_ZONE_SCALE = VIEW_W / VIEW_H;
 const STORAGE_KEY = "kyudo-log-history";
 
-// 矢所ゾーン.pdf の中央的基準（relX, relY）境界値
-const ZONE_OUTER_TOP = -118;
-const ZONE_ROW_56 = -37;
-const ZONE_ROW_34 = -13;
-const ZONE_ROW_12 = 12;
-const ZONE_BOTTOM = 37;
-const ZONE_OUTER_HALF_W = 92;
-const ZONE_INNER_HALF_W = 46;
+// 矢所ゾーン.pdf（的半径≈47に対する比率 → SVGの R=50 に換算）
+const PDF_TARGET_R = 47;
+const zr = (pdf: number) => (pdf / PDF_TARGET_R) * R;
+const ZONE_OUTER_TOP = zr(-118.2);
+const ZONE_ROW_56 = zr(-37.4);
+const ZONE_ROW_34 = zr(-12.6);
+const ZONE_ROW_12 = zr(12.2);
+const ZONE_BOTTOM = zr(37.25);
+const ZONE_OUTER_HALF_W = zr(92.3);
+const ZONE_INNER_HALF_W = zr(46.15);
 
 const ZONE_LABELS: Record<string, string> = {
   "0": "的", "1": "①", "2": "②", "3": "③", "4": "④",
@@ -45,10 +50,12 @@ const isHitZone = (zone: string) => zone === "0" || zone === "的" || zone === "
 const getZone = (x: number, y: number, treatTargetAsHit = true): string => {
   if (treatTargetAsHit && isOnCenterTarget(x, y)) return "0";
   const relY = y - TARGET_CY;
+  const outerX = ZONE_OUTER_HALF_W * X_ZONE_SCALE;
+  const innerX = ZONE_INNER_HALF_W * X_ZONE_SCALE;
   if (relY >= ZONE_BOTTOM || y >= ANDUCHI_H / 2) return "8";
-  if (relY < ZONE_OUTER_TOP || Math.abs(x) > ZONE_OUTER_HALF_W) return "7";
+  if (relY < ZONE_OUTER_TOP || Math.abs(x) > outerX) return "7";
   if (relY < ZONE_ROW_56) return "7";
-  if (x < -ZONE_INNER_HALF_W || x >= ZONE_INNER_HALF_W) return "7";
+  if (x < -innerX || x >= innerX) return "7";
   if (relY < ZONE_ROW_34) return x < 0 ? "5" : "6";
   if (relY < ZONE_ROW_12) return x < 0 ? "3" : "4";
   return x < 0 ? "1" : "2";
@@ -112,10 +119,10 @@ const ZoneOverlay: React.FC<{ zoneCounts: Record<string, number>; total: number;
   const yRow34 = TARGET_CY + ZONE_ROW_34;
   const yRow12 = TARGET_CY + ZONE_ROW_12;
   const yBottom = TARGET_CY + ZONE_BOTTOM;
-  const xInnerL = -ZONE_INNER_HALF_W;
-  const xInnerR = ZONE_INNER_HALF_W;
-  const xOuterL = -ZONE_OUTER_HALF_W;
-  const xOuterR = ZONE_OUTER_HALF_W;
+  const xInnerL = -ZONE_INNER_HALF_W * X_ZONE_SCALE;
+  const xInnerR = ZONE_INNER_HALF_W * X_ZONE_SCALE;
+  const xOuterL = -ZONE_OUTER_HALF_W * X_ZONE_SCALE;
+  const xOuterR = ZONE_OUTER_HALF_W * X_ZONE_SCALE;
   const anduchiBottom = ANDUCHI_H / 2;
 
   const zoneLabelPos: Record<string, [number, number]> = {
@@ -126,7 +133,7 @@ const ZoneOverlay: React.FC<{ zoneCounts: Record<string, number>; total: number;
     "4": [xInnerR / 2, TARGET_CY + (ZONE_ROW_34 + ZONE_ROW_12) / 2],
     "1": [xInnerL / 2, TARGET_CY + (ZONE_ROW_12 + ZONE_BOTTOM) / 2],
     "2": [xInnerR / 2, TARGET_CY + (ZONE_ROW_12 + ZONE_BOTTOM) / 2],
-    "8": [0, TARGET_CY + (ZONE_BOTTOM + 79) / 2],
+    "8": [0, TARGET_CY + (ZONE_BOTTOM + zr(79.4)) / 2],
   };
 
   if (layer === "fills") {
@@ -333,8 +340,8 @@ const App: React.FC = () => {
     const clientX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
     const clientY = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
     if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return;
-    const x = (clientX - rect.left - rect.width / 2) * ((ANDUCHI_W + 100) / rect.width);
-    const y = (clientY - rect.top - rect.height / 2) * ((ANDUCHI_H + STAIRS_H + 100) / rect.height);
+    const x = (clientX - rect.left - rect.width / 2) * (VIEW_W / rect.width);
+    const y = (clientY - rect.top - rect.height / 2) * (VIEW_H / rect.height);
     const zone = getZone(x, y);
     setShots([...shots, { id: Date.now(), x, y, zone, comment: "" }]);
   };
