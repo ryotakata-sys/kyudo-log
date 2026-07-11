@@ -20,15 +20,19 @@ const STAIRS_H = 3.0 * R;
 const TARGET_CY = ANDUCHI_H / 3;
 const STORAGE_KEY = "kyudo-log-history";
 
-const ZONE_GRID_TOP = -76;
-const ZONE_ROW_MID_TOP = -26;
-const ZONE_ROW_MID_BOTTOM = 23;
-const ZONE_GRID_INNER_HALF_W = 94;
+const ZONE_GRID_TOP = -118;
+const ZONE_ROW_MID_TOP = -13;
+const ZONE_ROW_MID_BOTTOM = 12;
+const ZONE_GRID_BOTTOM = 37;
+const ZONE_GRID_INNER_HALF_W = 46;
 
 const ZONE_LABELS: Record<string, string> = {
   "0": "的", "1": "①", "2": "②", "3": "③", "4": "④",
   "5": "⑤", "6": "⑥", "7": "⑦", "8": "⑧",
 };
+
+const zoneIntensity = (pct: number) => `rgba(220, 38, 38, ${Math.max(0.06, Math.min(0.88, pct / 100))})`;
+const zoneIntensitySolid = (pct: number) => `rgba(220, 38, 38, ${Math.max(0.15, Math.min(1, 0.2 + (pct / 100) * 0.8))})`;
 
 const isOnAnyTarget = (x: number, y: number) =>
   [-TARGET_SPACING, 0, TARGET_SPACING].some(ox => Math.sqrt((x - ox) ** 2 + (y - TARGET_CY) ** 2) <= R);
@@ -37,32 +41,25 @@ const isHitZone = (zone: string) => zone === "0" || zone === "的" || zone === "
 
 const getZone = (x: number, y: number, treatTargetAsHit = true): string => {
   if (treatTargetAsHit && isOnAnyTarget(x, y)) return "0";
+  const relY = y - TARGET_CY;
   if (y >= ANDUCHI_H / 2) return "8";
-  if (y < TARGET_CY + ZONE_GRID_TOP) return "7";
-  if (x >= -ZONE_GRID_INNER_HALF_W && x < ZONE_GRID_INNER_HALF_W) {
-    const relY = y - TARGET_CY;
-    if (relY < ZONE_ROW_MID_TOP) return x < 0 ? "5" : "6";
-    if (relY < ZONE_ROW_MID_BOTTOM) return x < 0 ? "3" : "4";
-    return x < 0 ? "1" : "2";
-  }
-  return "7";
+  if (relY >= ZONE_GRID_BOTTOM) return "8";
+  if (relY < ZONE_GRID_TOP) return "7";
+  if (x < -ZONE_GRID_INNER_HALF_W || x >= ZONE_GRID_INNER_HALF_W) return "7";
+  if (relY < ZONE_ROW_MID_TOP) return x < 0 ? "5" : "6";
+  if (relY < ZONE_ROW_MID_BOTTOM) return x < 0 ? "3" : "4";
+  return x < 0 ? "1" : "2";
 };
 
 const zoneLabel = (zone: string) => ZONE_LABELS[zone] ?? zone;
 
-const normalizeZone = (zone: string): string => {
-  if (isHitZone(zone)) return "0";
-  if (zone === "階段") return "8";
-  if (zone === "安土") return "7";
-  if (/^[0-8]$/.test(zone)) return zone;
-  return "7";
-};
+const resolveShotZone = (shot: Shot) => getZone(shot.x, shot.y);
 
 const getZoneCounts = (shots: Shot[]) => {
   const counts: Record<string, number> = Object.fromEntries(
     Array.from({ length: 9 }, (_, i) => [String(i), 0])
   );
-  shots.forEach(s => { counts[normalizeZone(s.zone)]++; });
+  shots.forEach(s => { counts[resolveShotZone(s)]++; });
   return counts;
 };
 
@@ -88,20 +85,94 @@ const ZoneBreakdown: React.FC<{ total: number; zoneCounts: Record<string, number
       const count = zoneCounts[String(i)];
       const pct = total > 0 ? (count / total) * 100 : 0;
       const label = i === 0 ? "的（0）" : zoneLabel(String(i));
+      const color = zoneIntensitySolid(pct);
       return (
         <div key={i}>
           <div className="flex justify-between text-xs font-bold mb-1">
-            <span className={i === 0 ? "text-red-600" : "text-gray-600"}>{label}</span>
-            <span className={i === 0 ? "text-red-600" : "text-slate-800"}>{pct.toFixed(1)}% <span className="text-gray-400 font-medium">({count}射)</span></span>
+            <span style={{ color }}>{label}</span>
+            <span style={{ color }}>{pct.toFixed(1)}% <span className="text-gray-400 font-medium">({count}射)</span></span>
           </div>
           <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-            <div className={`h-full rounded-full transition-all ${i === 0 ? "bg-red-500" : "bg-slate-500"}`} style={{ width: `${pct}%` }} />
+            <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: color }} />
           </div>
         </div>
       );
     })}
   </div>
 );
+
+const ZoneOverlay: React.FC<{ zoneCounts: Record<string, number>; total: number; layer: "fills" | "decor" }> = ({ zoneCounts, total, layer }) => {
+  const pct = (z: number) => total > 0 ? (zoneCounts[String(z)] / total) * 100 : 0;
+  const fill = (z: number) => zoneIntensity(pct(z));
+  const yTop = TARGET_CY + ZONE_GRID_TOP;
+  const yRow1 = TARGET_CY + ZONE_ROW_MID_TOP;
+  const yRow2 = TARGET_CY + ZONE_ROW_MID_BOTTOM;
+  const yBottom = TARGET_CY + ZONE_GRID_BOTTOM;
+  const xL = -ZONE_GRID_INNER_HALF_W;
+  const xR = ZONE_GRID_INNER_HALF_W;
+  const xHalf = ZONE_GRID_INNER_HALF_W;
+  const anduchiTop = -ANDUCHI_H / 2;
+  const anduchiBottom = ANDUCHI_H / 2;
+
+  const zoneLabelPos: Record<string, [number, number]> = {
+    "5": [xL / 2, (yTop + yRow1) / 2],
+    "6": [xR / 2, (yTop + yRow1) / 2],
+    "3": [xL / 2, (yRow1 + yRow2) / 2],
+    "4": [xR / 2, (yRow1 + yRow2) / 2],
+    "1": [xL / 2, (yRow2 + yBottom) / 2],
+    "2": [xR / 2, (yRow2 + yBottom) / 2],
+    "7": [0, (anduchiTop + yTop) / 2],
+    "8": [0, (yBottom + anduchiBottom) / 2],
+  };
+
+  if (layer === "fills") {
+    return (
+      <g pointerEvents="none">
+        <rect x={-ANDUCHI_W / 2} y={anduchiTop} width={ANDUCHI_W} height={yTop - anduchiTop} fill={fill(7)} />
+        <rect x={-ANDUCHI_W / 2} y={yTop} width={ANDUCHI_W / 2 + xL} height={yBottom - yTop} fill={fill(7)} />
+        <rect x={xR} y={yTop} width={ANDUCHI_W / 2 - xR} height={yBottom - yTop} fill={fill(7)} />
+        <rect x={xL} y={yTop} width={xHalf} height={yRow1 - yTop} fill={fill(5)} />
+        <rect x={0} y={yTop} width={xHalf} height={yRow1 - yTop} fill={fill(6)} />
+        <rect x={xL} y={yRow1} width={xHalf} height={yRow2 - yRow1} fill={fill(3)} />
+        <rect x={0} y={yRow1} width={xHalf} height={yRow2 - yRow1} fill={fill(4)} />
+        <rect x={xL} y={yRow2} width={xHalf} height={yBottom - yRow2} fill={fill(1)} />
+        <rect x={0} y={yRow2} width={xHalf} height={yBottom - yRow2} fill={fill(2)} />
+        <rect x={-ANDUCHI_W / 2} y={yBottom} width={ANDUCHI_W} height={anduchiBottom - yBottom} fill={fill(8)} />
+        <rect x={-ANDUCHI_W / 2} y={anduchiBottom} width={ANDUCHI_W} height={STAIRS_H} fill={fill(8)} />
+        {[-TARGET_SPACING, 0, TARGET_SPACING].map(ox => (
+          <circle key={`z0-${ox}`} cx={ox} cy={TARGET_CY} r={R} fill={fill(0)} />
+        ))}
+      </g>
+    );
+  }
+
+  return (
+    <g pointerEvents="none">
+      <rect x={xL} y={yTop} width={xR - xL} height={yBottom - yTop} fill="none" stroke="#dc2626" strokeWidth={1.5} />
+      <line x1={xL} y1={yTop} x2={xL} y2={yBottom} stroke="#dc2626" strokeWidth={1.5} />
+      <line x1={0} y1={yTop} x2={0} y2={yBottom} stroke="#dc2626" strokeWidth={1.5} />
+      <line x1={xR} y1={yTop} x2={xR} y2={yBottom} stroke="#dc2626" strokeWidth={1.5} />
+      <line x1={xL} y1={yTop} x2={xR} y2={yTop} stroke="#dc2626" strokeWidth={1.5} />
+      <line x1={xL} y1={yRow1} x2={xR} y2={yRow1} stroke="#dc2626" strokeWidth={1.5} />
+      <line x1={xL} y1={yRow2} x2={xR} y2={yRow2} stroke="#dc2626" strokeWidth={1.5} />
+      <line x1={xL} y1={yBottom} x2={xR} y2={yBottom} stroke="#dc2626" strokeWidth={1.5} />
+      <line x1={-ANDUCHI_W / 2} y1={yBottom} x2={ANDUCHI_W / 2} y2={yBottom} stroke="#dc2626" strokeWidth={1.5} />
+      <line x1={-ANDUCHI_W / 2} y1={yTop} x2={ANDUCHI_W / 2} y2={yTop} stroke="#dc2626" strokeWidth={1} strokeDasharray="6 4" />
+      {Object.entries(zoneLabelPos).map(([z, [lx, ly]]) => (
+        <g key={z}>
+          <circle cx={lx} cy={ly} r={14} fill="white" stroke="#dc2626" strokeWidth={1.5} />
+          <text x={lx} y={ly} fontSize={13} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill="#dc2626">{z}</text>
+        </g>
+      ))}
+      {[-TARGET_SPACING, 0, TARGET_SPACING].map(ox => (
+        <g key={`lbl0-${ox}`}>
+          <circle cx={ox} cy={TARGET_CY} r={14} fill="white" stroke="#dc2626" strokeWidth={1.5} />
+          <text x={ox} y={TARGET_CY} fontSize={13} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill="#dc2626">0</text>
+        </g>
+      ))}
+    </g>
+  );
+};
 
 const App: React.FC = () => {
   const [shots, setShots] = useState<Shot[]>([]);
@@ -322,15 +393,23 @@ const App: React.FC = () => {
                 <svg ref={svgRef} viewBox={`-${(ANDUCHI_W+100)/2} -${(ANDUCHI_H+STAIRS_H+100)/2} ${ANDUCHI_W+100} ${ANDUCHI_H+STAIRS_H+100}`} className="w-full h-auto cursor-crosshair">
                   <rect x={-ANDUCHI_W/2} y={-ANDUCHI_H/2} width={ANDUCHI_W} height={ANDUCHI_H} fill="#d2b48c" />
                   <rect x={-ANDUCHI_W/2} y={ANDUCHI_H/2} width={ANDUCHI_W} height={STAIRS_H} fill="#4a634a" />
+                  {isRangeMode && stats.total > 0 && <ZoneOverlay zoneCounts={stats.zoneCounts} total={stats.total} layer="fills" />}
                   {[-TARGET_SPACING, 0, TARGET_SPACING].map(ox => (
                     <g key={ox} transform={`translate(${ox}, ${ANDUCHI_H/3})`}>
                       {[5,4,3,2,1].map(i => (<circle key={i} r={(R/5)*i} fill={i%2===0 ? "white" : "black"} stroke="#333" strokeWidth="0.5" />))}
                     </g>
                   ))}
+                  {isRangeMode && stats.total > 0 && <ZoneOverlay zoneCounts={stats.zoneCounts} total={stats.total} layer="decor" />}
                   {(isRangeMode ? stats.all : shots).map((s, idx) => (
                     <g key={s.id} transform={`translate(${s.x}, ${s.y})`}>
-                      <circle r={14} fill={isRangeMode ? "rgba(0,0,0,0.5)" : "white"} stroke={isHitZone(s.zone) ? "#ef4444" : "#374151"} strokeWidth={2.5} />
-                      {!isRangeMode && <text fontSize={12} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill={isHitZone(s.zone) ? "#ef4444" : "#374151"}>{idx+1}</text>}
+                      {isRangeMode ? (
+                        <circle r={4} fill="rgba(55,65,81,0.75)" />
+                      ) : (
+                        <>
+                          <circle r={14} fill="white" stroke={isHitZone(s.zone) ? "#ef4444" : "#374151"} strokeWidth={2.5} />
+                          <text fontSize={12} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill={isHitZone(s.zone) ? "#ef4444" : "#374151"}>{idx+1}</text>
+                        </>
+                      )}
                     </g>
                   ))}
                 </svg>
@@ -383,12 +462,13 @@ const App: React.FC = () => {
               <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-9 gap-3 mb-12">
                 {Array.from({ length: 9 }, (_, i) => {
                   const count = stats.zoneCounts[String(i)];
-                  const pct = ((count / stats.total) * 100).toFixed(1);
+                  const pct = (count / stats.total) * 100;
+                  const color = zoneIntensitySolid(pct);
                   return (
-                    <div key={i} className={`p-4 rounded-2xl border text-center shadow-sm ${i === 0 ? "bg-red-50 border-red-100" : "bg-white border-gray-100"}`}>
-                      <span className={`text-[10px] font-black block mb-1 ${i === 0 ? "text-red-600" : "text-gray-400"}`}>{i === 0 ? "的" : zoneLabel(String(i))}</span>
-                      <span className={`text-2xl font-black block ${i === 0 ? "text-red-600" : "text-slate-800"}`}>{pct}%</span>
-                      <span className="text-[10px] font-bold text-gray-400">{count}射</span>
+                    <div key={i} className="p-4 rounded-2xl border text-center shadow-sm" style={{ backgroundColor: zoneIntensity(pct), borderColor: color }}>
+                      <span className="text-[10px] font-black block mb-1" style={{ color }}>{i === 0 ? "的" : zoneLabel(String(i))}</span>
+                      <span className="text-2xl font-black block" style={{ color }}>{pct.toFixed(1)}%</span>
+                      <span className="text-[10px] font-bold text-gray-500">{count}射</span>
                     </div>
                   );
                 })}
