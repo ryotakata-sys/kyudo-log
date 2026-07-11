@@ -20,11 +20,14 @@ const STAIRS_H = 3.0 * R;
 const TARGET_CY = ANDUCHI_H / 3;
 const STORAGE_KEY = "kyudo-log-history";
 
-const ZONE_GRID_TOP = -118;
-const ZONE_ROW_MID_TOP = -13;
-const ZONE_ROW_MID_BOTTOM = 12;
-const ZONE_GRID_BOTTOM = 37;
-const ZONE_GRID_INNER_HALF_W = 46;
+// 矢所ゾーン.pdf の中央的基準（relX, relY）境界値
+const ZONE_OUTER_TOP = -118;
+const ZONE_ROW_56 = -37;
+const ZONE_ROW_34 = -13;
+const ZONE_ROW_12 = 12;
+const ZONE_BOTTOM = 37;
+const ZONE_OUTER_HALF_W = 92;
+const ZONE_INNER_HALF_W = 46;
 
 const ZONE_LABELS: Record<string, string> = {
   "0": "的", "1": "①", "2": "②", "3": "③", "4": "④",
@@ -34,20 +37,20 @@ const ZONE_LABELS: Record<string, string> = {
 const zoneIntensity = (pct: number) => `rgba(220, 38, 38, ${Math.max(0.06, Math.min(0.88, pct / 100))})`;
 const zoneIntensitySolid = (pct: number) => `rgba(220, 38, 38, ${Math.max(0.15, Math.min(1, 0.2 + (pct / 100) * 0.8))})`;
 
-const isOnAnyTarget = (x: number, y: number) =>
-  [-TARGET_SPACING, 0, TARGET_SPACING].some(ox => Math.sqrt((x - ox) ** 2 + (y - TARGET_CY) ** 2) <= R);
+const isOnCenterTarget = (x: number, y: number) =>
+  Math.sqrt(x * x + (y - TARGET_CY) ** 2) <= R;
 
 const isHitZone = (zone: string) => zone === "0" || zone === "的" || zone === "的な";
 
 const getZone = (x: number, y: number, treatTargetAsHit = true): string => {
-  if (treatTargetAsHit && isOnAnyTarget(x, y)) return "0";
+  if (treatTargetAsHit && isOnCenterTarget(x, y)) return "0";
   const relY = y - TARGET_CY;
-  if (y >= ANDUCHI_H / 2) return "8";
-  if (relY >= ZONE_GRID_BOTTOM) return "8";
-  if (relY < ZONE_GRID_TOP) return "7";
-  if (x < -ZONE_GRID_INNER_HALF_W || x >= ZONE_GRID_INNER_HALF_W) return "7";
-  if (relY < ZONE_ROW_MID_TOP) return x < 0 ? "5" : "6";
-  if (relY < ZONE_ROW_MID_BOTTOM) return x < 0 ? "3" : "4";
+  if (relY >= ZONE_BOTTOM || y >= ANDUCHI_H / 2) return "8";
+  if (relY < ZONE_OUTER_TOP || Math.abs(x) > ZONE_OUTER_HALF_W) return "7";
+  if (relY < ZONE_ROW_56) return "7";
+  if (x < -ZONE_INNER_HALF_W || x >= ZONE_INNER_HALF_W) return "7";
+  if (relY < ZONE_ROW_34) return x < 0 ? "5" : "6";
+  if (relY < ZONE_ROW_12) return x < 0 ? "3" : "4";
   return x < 0 ? "1" : "2";
 };
 
@@ -104,72 +107,74 @@ const ZoneBreakdown: React.FC<{ total: number; zoneCounts: Record<string, number
 const ZoneOverlay: React.FC<{ zoneCounts: Record<string, number>; total: number; layer: "fills" | "decor" }> = ({ zoneCounts, total, layer }) => {
   const pct = (z: number) => total > 0 ? (zoneCounts[String(z)] / total) * 100 : 0;
   const fill = (z: number) => zoneIntensity(pct(z));
-  const yTop = TARGET_CY + ZONE_GRID_TOP;
-  const yRow1 = TARGET_CY + ZONE_ROW_MID_TOP;
-  const yRow2 = TARGET_CY + ZONE_ROW_MID_BOTTOM;
-  const yBottom = TARGET_CY + ZONE_GRID_BOTTOM;
-  const xL = -ZONE_GRID_INNER_HALF_W;
-  const xR = ZONE_GRID_INNER_HALF_W;
-  const xHalf = ZONE_GRID_INNER_HALF_W;
-  const anduchiTop = -ANDUCHI_H / 2;
+  const yOuterTop = TARGET_CY + ZONE_OUTER_TOP;
+  const yRow56 = TARGET_CY + ZONE_ROW_56;
+  const yRow34 = TARGET_CY + ZONE_ROW_34;
+  const yRow12 = TARGET_CY + ZONE_ROW_12;
+  const yBottom = TARGET_CY + ZONE_BOTTOM;
+  const xInnerL = -ZONE_INNER_HALF_W;
+  const xInnerR = ZONE_INNER_HALF_W;
+  const xOuterL = -ZONE_OUTER_HALF_W;
+  const xOuterR = ZONE_OUTER_HALF_W;
   const anduchiBottom = ANDUCHI_H / 2;
 
   const zoneLabelPos: Record<string, [number, number]> = {
-    "5": [xL / 2, (yTop + yRow1) / 2],
-    "6": [xR / 2, (yTop + yRow1) / 2],
-    "3": [xL / 2, (yRow1 + yRow2) / 2],
-    "4": [xR / 2, (yRow1 + yRow2) / 2],
-    "1": [xL / 2, (yRow2 + yBottom) / 2],
-    "2": [xR / 2, (yRow2 + yBottom) / 2],
-    "7": [0, (anduchiTop + yTop) / 2],
-    "8": [0, (yBottom + anduchiBottom) / 2],
+    "7": [0, TARGET_CY + (ZONE_OUTER_TOP + ZONE_ROW_56) / 2],
+    "5": [xInnerL / 2, TARGET_CY + (ZONE_ROW_56 + ZONE_ROW_34) / 2],
+    "6": [xInnerR / 2, TARGET_CY + (ZONE_ROW_56 + ZONE_ROW_34) / 2],
+    "3": [xInnerL / 2, TARGET_CY + (ZONE_ROW_34 + ZONE_ROW_12) / 2],
+    "4": [xInnerR / 2, TARGET_CY + (ZONE_ROW_34 + ZONE_ROW_12) / 2],
+    "1": [xInnerL / 2, TARGET_CY + (ZONE_ROW_12 + ZONE_BOTTOM) / 2],
+    "2": [xInnerR / 2, TARGET_CY + (ZONE_ROW_12 + ZONE_BOTTOM) / 2],
+    "8": [0, TARGET_CY + (ZONE_BOTTOM + 79) / 2],
   };
 
   if (layer === "fills") {
     return (
       <g pointerEvents="none">
-        <rect x={-ANDUCHI_W / 2} y={anduchiTop} width={ANDUCHI_W} height={yTop - anduchiTop} fill={fill(7)} />
-        <rect x={-ANDUCHI_W / 2} y={yTop} width={ANDUCHI_W / 2 + xL} height={yBottom - yTop} fill={fill(7)} />
-        <rect x={xR} y={yTop} width={ANDUCHI_W / 2 - xR} height={yBottom - yTop} fill={fill(7)} />
-        <rect x={xL} y={yTop} width={xHalf} height={yRow1 - yTop} fill={fill(5)} />
-        <rect x={0} y={yTop} width={xHalf} height={yRow1 - yTop} fill={fill(6)} />
-        <rect x={xL} y={yRow1} width={xHalf} height={yRow2 - yRow1} fill={fill(3)} />
-        <rect x={0} y={yRow1} width={xHalf} height={yRow2 - yRow1} fill={fill(4)} />
-        <rect x={xL} y={yRow2} width={xHalf} height={yBottom - yRow2} fill={fill(1)} />
-        <rect x={0} y={yRow2} width={xHalf} height={yBottom - yRow2} fill={fill(2)} />
-        <rect x={-ANDUCHI_W / 2} y={yBottom} width={ANDUCHI_W} height={anduchiBottom - yBottom} fill={fill(8)} />
-        <rect x={-ANDUCHI_W / 2} y={anduchiBottom} width={ANDUCHI_W} height={STAIRS_H} fill={fill(8)} />
-        {[-TARGET_SPACING, 0, TARGET_SPACING].map(ox => (
-          <circle key={`z0-${ox}`} cx={ox} cy={TARGET_CY} r={R} fill={fill(0)} />
-        ))}
+        {/* ⑦ 上段 */}
+        <rect x={xOuterL} y={yOuterTop} width={xOuterR - xOuterL} height={yRow56 - yOuterTop} fill={fill(7)} />
+        {/* ⑦ 左右 */}
+        <rect x={xOuterL} y={yRow56} width={xInnerL - xOuterL} height={yBottom - yRow56} fill={fill(7)} />
+        <rect x={xInnerR} y={yRow56} width={xOuterR - xInnerR} height={yBottom - yRow56} fill={fill(7)} />
+        {/* ①〜⑥ */}
+        <rect x={xInnerL} y={yRow56} width={-xInnerL} height={yRow34 - yRow56} fill={fill(5)} />
+        <rect x={0} y={yRow56} width={xInnerR} height={yRow34 - yRow56} fill={fill(6)} />
+        <rect x={xInnerL} y={yRow34} width={-xInnerL} height={yRow12 - yRow34} fill={fill(3)} />
+        <rect x={0} y={yRow34} width={xInnerR} height={yRow12 - yRow34} fill={fill(4)} />
+        <rect x={xInnerL} y={yRow12} width={-xInnerL} height={yBottom - yRow12} fill={fill(1)} />
+        <rect x={0} y={yRow12} width={xInnerR} height={yBottom - yRow12} fill={fill(2)} />
+        {/* ⑧ */}
+        <rect x={xOuterL} y={yBottom} width={xOuterR - xOuterL} height={anduchiBottom - yBottom} fill={fill(8)} />
+        <rect x={xOuterL} y={anduchiBottom} width={xOuterR - xOuterL} height={STAIRS_H} fill={fill(8)} />
+        {/* ⓪ 中央の的のみ */}
+        <circle cx={0} cy={TARGET_CY} r={R} fill={fill(0)} />
       </g>
     );
   }
 
   return (
     <g pointerEvents="none">
-      <rect x={xL} y={yTop} width={xR - xL} height={yBottom - yTop} fill="none" stroke="#dc2626" strokeWidth={1.5} />
-      <line x1={xL} y1={yTop} x2={xL} y2={yBottom} stroke="#dc2626" strokeWidth={1.5} />
-      <line x1={0} y1={yTop} x2={0} y2={yBottom} stroke="#dc2626" strokeWidth={1.5} />
-      <line x1={xR} y1={yTop} x2={xR} y2={yBottom} stroke="#dc2626" strokeWidth={1.5} />
-      <line x1={xL} y1={yTop} x2={xR} y2={yTop} stroke="#dc2626" strokeWidth={1.5} />
-      <line x1={xL} y1={yRow1} x2={xR} y2={yRow1} stroke="#dc2626" strokeWidth={1.5} />
-      <line x1={xL} y1={yRow2} x2={xR} y2={yRow2} stroke="#dc2626" strokeWidth={1.5} />
-      <line x1={xL} y1={yBottom} x2={xR} y2={yBottom} stroke="#dc2626" strokeWidth={1.5} />
-      <line x1={-ANDUCHI_W / 2} y1={yBottom} x2={ANDUCHI_W / 2} y2={yBottom} stroke="#dc2626" strokeWidth={1.5} />
-      <line x1={-ANDUCHI_W / 2} y1={yTop} x2={ANDUCHI_W / 2} y2={yTop} stroke="#dc2626" strokeWidth={1} strokeDasharray="6 4" />
+      <rect x={xOuterL} y={yOuterTop} width={xOuterR - xOuterL} height={yBottom - yOuterTop} fill="none" stroke="#dc2626" strokeWidth={1.5} />
+      <rect x={xInnerL} y={yRow56} width={xInnerR - xInnerL} height={yBottom - yRow56} fill="none" stroke="#dc2626" strokeWidth={1.5} />
+      <line x1={xInnerL} y1={yRow56} x2={xInnerL} y2={yBottom} stroke="#dc2626" strokeWidth={1.5} />
+      <line x1={0} y1={yRow56} x2={0} y2={yBottom} stroke="#dc2626" strokeWidth={1.5} />
+      <line x1={xInnerR} y1={yRow56} x2={xInnerR} y2={yBottom} stroke="#dc2626" strokeWidth={1.5} />
+      <line x1={xInnerL} y1={yRow56} x2={xInnerR} y2={yRow56} stroke="#dc2626" strokeWidth={1.5} />
+      <line x1={xInnerL} y1={yRow34} x2={xInnerR} y2={yRow34} stroke="#dc2626" strokeWidth={1.5} />
+      <line x1={xInnerL} y1={yRow12} x2={xInnerR} y2={yRow12} stroke="#dc2626" strokeWidth={1.5} />
+      <line x1={xInnerL} y1={yBottom} x2={xInnerR} y2={yBottom} stroke="#dc2626" strokeWidth={1.5} />
+      <line x1={xOuterL} y1={yBottom} x2={xOuterR} y2={yBottom} stroke="#dc2626" strokeWidth={1.5} />
       {Object.entries(zoneLabelPos).map(([z, [lx, ly]]) => (
         <g key={z}>
           <circle cx={lx} cy={ly} r={14} fill="white" stroke="#dc2626" strokeWidth={1.5} />
           <text x={lx} y={ly} fontSize={13} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill="#dc2626">{z}</text>
         </g>
       ))}
-      {[-TARGET_SPACING, 0, TARGET_SPACING].map(ox => (
-        <g key={`lbl0-${ox}`}>
-          <circle cx={ox} cy={TARGET_CY} r={14} fill="white" stroke="#dc2626" strokeWidth={1.5} />
-          <text x={ox} y={TARGET_CY} fontSize={13} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill="#dc2626">0</text>
-        </g>
-      ))}
+      <g>
+        <circle cx={0} cy={TARGET_CY} r={14} fill="white" stroke="#dc2626" strokeWidth={1.5} />
+        <text x={0} y={TARGET_CY} fontSize={13} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill="#dc2626">0</text>
+      </g>
     </g>
   );
 };
