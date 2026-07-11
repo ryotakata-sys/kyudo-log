@@ -17,24 +17,91 @@ const TARGET_SPACING = 9.6 * R;
 const ANDUCHI_W = TARGET_SPACING * 2 + R * 4;
 const ANDUCHI_H = 8.8 * R;
 const STAIRS_H = 3.0 * R;
+const TARGET_CY = ANDUCHI_H / 3;
 const STORAGE_KEY = "kyudo-log-history";
 
-const getAIAnalysis = (shots: Shot[]) => {
-  if (shots.length === 0) return "データがありません。";
-  const avgX = shots.reduce((acc, s) => acc + s.x, 0) / shots.length;
-  const avgY = shots.reduce((acc, s) => acc + s.y, 0) / shots.length;
-  const hits = shots.filter(s => s.zone === "的な" || s.zone === "的").length;
-  const hitRate = (hits / shots.length) * 100;
-  let report = `【AI矢所分析】\n\n`;
-  if (avgX > 15) report += `・「右逸」傾向。妻手の緩みに注意。\n\n`;
-  else if (avgX < -15) report += `・「前矢」傾向。押し手・物見を確認。\n\n`;
-  else report += `・左右の筋は安定しています。\n\n`;
-  if (avgY < ANDUCHI_H/3 - 15) report += `・矢所が高い。狙いを確認。\n\n`;
-  else if (avgY > ANDUCHI_H/3 + 15) report += `・「下矢」傾向。肩の上がりを確認。\n\n`;
-  else report += `・上下の高さが揃っています。\n\n`;
-  report += `【総評】的中率 ${hitRate.toFixed(1)}% (${shots.length}射中${hits}中)。`;
+const ZONE_GRID_TOP = -76;
+const ZONE_ROW_MID_TOP = -26;
+const ZONE_ROW_MID_BOTTOM = 23;
+const ZONE_GRID_INNER_HALF_W = 94;
+
+const ZONE_LABELS: Record<string, string> = {
+  "0": "的", "1": "①", "2": "②", "3": "③", "4": "④",
+  "5": "⑤", "6": "⑥", "7": "⑦", "8": "⑧",
+};
+
+const isOnAnyTarget = (x: number, y: number) =>
+  [-TARGET_SPACING, 0, TARGET_SPACING].some(ox => Math.sqrt((x - ox) ** 2 + (y - TARGET_CY) ** 2) <= R);
+
+const isHitZone = (zone: string) => zone === "0" || zone === "的" || zone === "的な";
+
+const getZone = (x: number, y: number, treatTargetAsHit = true): string => {
+  if (treatTargetAsHit && isOnAnyTarget(x, y)) return "0";
+  if (y >= ANDUCHI_H / 2) return "8";
+  if (y < TARGET_CY + ZONE_GRID_TOP) return "7";
+  if (x >= -ZONE_GRID_INNER_HALF_W && x < ZONE_GRID_INNER_HALF_W) {
+    const relY = y - TARGET_CY;
+    if (relY < ZONE_ROW_MID_TOP) return x < 0 ? "5" : "6";
+    if (relY < ZONE_ROW_MID_BOTTOM) return x < 0 ? "3" : "4";
+    return x < 0 ? "1" : "2";
+  }
+  return "7";
+};
+
+const zoneLabel = (zone: string) => ZONE_LABELS[zone] ?? zone;
+
+const normalizeZone = (zone: string): string => {
+  if (isHitZone(zone)) return "0";
+  if (zone === "階段") return "8";
+  if (zone === "安土") return "7";
+  if (/^[0-8]$/.test(zone)) return zone;
+  return "7";
+};
+
+const getZoneCounts = (shots: Shot[]) => {
+  const counts: Record<string, number> = Object.fromEntries(
+    Array.from({ length: 9 }, (_, i) => [String(i), 0])
+  );
+  shots.forEach(s => { counts[normalizeZone(s.zone)]++; });
+  return counts;
+};
+
+const getTendencyAnalysis = (shots: Shot[]) => {
+  if (shots.length === 0) return "";
+  const total = shots.length;
+  const avgX = shots.reduce((acc, s) => acc + s.x, 0) / total;
+  const avgY = shots.reduce((acc, s) => acc + s.y, 0) / total;
+  let report = `【傾向分析】\n`;
+  if (avgX > 15) report += `・「右逸」傾向。妻手の緩みに注意。\n`;
+  else if (avgX < -15) report += `・「前矢」傾向。押し手・物見を確認。\n`;
+  else report += `・左右の筋は安定しています。\n`;
+  if (avgY < TARGET_CY - 15) report += `・矢所が高い。狙いを確認。\n`;
+  else if (avgY > TARGET_CY + 15) report += `・「下矢」傾向。肩の上がりを確認。\n`;
+  else report += `・上下の高さが揃っています。\n`;
   return report;
 };
+
+const ZoneBreakdown: React.FC<{ total: number; zoneCounts: Record<string, number> }> = ({ total, zoneCounts }) => (
+  <div className="space-y-3">
+    <p className="text-xs font-black text-gray-400 uppercase tracking-widest">ゾーン別射着率（{total}射）</p>
+    {Array.from({ length: 9 }, (_, i) => {
+      const count = zoneCounts[String(i)];
+      const pct = total > 0 ? (count / total) * 100 : 0;
+      const label = i === 0 ? "的（0）" : zoneLabel(String(i));
+      return (
+        <div key={i}>
+          <div className="flex justify-between text-xs font-bold mb-1">
+            <span className={i === 0 ? "text-red-600" : "text-gray-600"}>{label}</span>
+            <span className={i === 0 ? "text-red-600" : "text-slate-800"}>{pct.toFixed(1)}% <span className="text-gray-400 font-medium">({count}射)</span></span>
+          </div>
+          <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+            <div className={`h-full rounded-full transition-all ${i === 0 ? "bg-red-500" : "bg-slate-500"}`} style={{ width: `${pct}%` }} />
+          </div>
+        </div>
+      );
+    })}
+  </div>
+);
 
 const App: React.FC = () => {
   const [shots, setShots] = useState<Shot[]>([]);
@@ -70,8 +137,15 @@ const App: React.FC = () => {
 
   const stats = useMemo(() => {
     const all = filteredHistory.flatMap(h => h.shots);
-    const hits = all.filter(s => s.zone === "的な" || s.zone === "的").length;
-    return { total: all.length, hits, rate: all.length > 0 ? ((hits / all.length) * 100).toFixed(1) : "0.0", all };
+    const zoneCounts = getZoneCounts(all);
+    const hits = zoneCounts["0"];
+    return {
+      total: all.length,
+      hits,
+      rate: all.length > 0 ? ((hits / all.length) * 100).toFixed(1) : "0.0",
+      zoneCounts,
+      all,
+    };
   }, [filteredHistory]);
 
   const resetUI = () => { setEditingId(null); setShots([]); setPlace(""); setNote(""); setGoal(""); setGoalAchieved(null); setGoalMemo(""); setZoom(1); setOffset({ x: 0, y: 0 }); };
@@ -185,8 +259,7 @@ const App: React.FC = () => {
     if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return;
     const x = (clientX - rect.left - rect.width / 2) * ((ANDUCHI_W + 100) / rect.width);
     const y = (clientY - rect.top - rect.height / 2) * ((ANDUCHI_H + STAIRS_H + 100) / rect.height);
-    const isHit = Math.sqrt(x*x + (y - ANDUCHI_H/3)**2) <= R;
-    const zone = isHit ? "的な" : (y < ANDUCHI_H/2 ? "安土" : "階段");
+    const zone = getZone(x, y);
     setShots([...shots, { id: Date.now(), x, y, zone, comment: "" }]);
   };
 
@@ -256,8 +329,8 @@ const App: React.FC = () => {
                   ))}
                   {(isRangeMode ? stats.all : shots).map((s, idx) => (
                     <g key={s.id} transform={`translate(${s.x}, ${s.y})`}>
-                      <circle r={14} fill={isRangeMode ? "rgba(0,0,0,0.5)" : "white"} stroke={(s.zone==="的な" || s.zone==="的") ? "#ef4444" : "#374151"} strokeWidth={2.5} />
-                      {!isRangeMode && <text fontSize={12} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill={(s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "#ef4444" : "#374151"}>{idx+1}</text>}
+                      <circle r={14} fill={isRangeMode ? "rgba(0,0,0,0.5)" : "white"} stroke={isHitZone(s.zone) ? "#ef4444" : "#374151"} strokeWidth={2.5} />
+                      {!isRangeMode && <text fontSize={12} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill={isHitZone(s.zone) ? "#ef4444" : "#374151"}>{idx+1}</text>}
                     </g>
                   ))}
                 </svg>
@@ -270,19 +343,24 @@ const App: React.FC = () => {
 
             <aside className="space-y-6">
               <div className="bg-white border-2 border-gray-100 rounded-[2rem] p-6 h-[500px] overflow-y-auto shadow-sm">
-                <h3 className="text-xs font-black text-gray-400 uppercase mb-4 flex justify-between italic tracking-widest font-bold"><span>{isRangeMode ? 'AI分析結果' : 'Shots Note'}</span></h3>
+                <h3 className="text-xs font-black text-gray-400 uppercase mb-4 flex justify-between italic tracking-widest font-bold"><span>{isRangeMode ? '期間分析' : 'Shots Note'}</span></h3>
                 {!isRangeMode ?
                 shots.map((s, i) => (
                   <div key={s.id} className="flex gap-3 mb-4 border-b border-gray-50 pb-4 items-center text-slate-900">
                     <div className="w-7 h-7 bg-black text-white rounded-full flex items-center justify-center font-bold text-[10px] shrink-0">{i+1}</div>
-                    <button onClick={() => { const n=[...shots]; n[i].zone = (s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "安土" : "的な"; setShots(n); }}
-                      className={`text-xs font-black shrink-0 w-10 text-left ${(s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "text-red-600" : "text-gray-500"}`}>
-                      {(s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的") ? "的中" : "安土"}
+                    <button onClick={() => { const n=[...shots]; n[i].zone = isHitZone(s.zone) ? getZone(s.x, s.y, false) : "0"; setShots(n); }}
+                      className={`text-xs font-black shrink-0 w-10 text-left ${isHitZone(s.zone) ? "text-red-600" : "text-gray-500"}`}>
+                      {zoneLabel(s.zone)}
                     </button>
                     <input value={s.comment} onChange={e=>{const n=[...shots]; n[i].comment=e.target.value; setShots(n);}} className="flex-1 outline-none text-sm border-l pl-3 font-medium" placeholder="備考..." />
                   </div>
-                )) : (
-                  <div className="bg-gray-50 p-5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap font-medium text-gray-700 border border-gray-200">{getAIAnalysis(stats.all)}</div>
+                )) : stats.total === 0 ? (
+                  <div className="text-sm text-gray-500">データがありません。</div>
+                ) : (
+                  <div className="space-y-5">
+                    <ZoneBreakdown total={stats.total} zoneCounts={stats.zoneCounts} />
+                    <div className="bg-gray-50 p-5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap font-medium text-gray-700 border border-gray-200">{getTendencyAnalysis(stats.all)}</div>
+                  </div>
                 )}
               </div>
               <textarea value={note} onChange={e=>setNote(e.target.value)} className="w-full bg-gray-50 border border-gray-100 rounded-[2rem] p-6 h-32 outline-none text-sm resize-none shadow-inner text-slate-900 font-bold" placeholder="全体まとめ..." />
@@ -296,11 +374,27 @@ const App: React.FC = () => {
                <span className="text-gray-300">〜</span><input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} className="bg-transparent text-[10px] font-bold outline-none text-slate-900" />
                <button onClick={() => { setIsRangeMode(true); setZoom(1); setOffset({x:0, y:0}); }} className="bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 transition hover:bg-gray-800 shadow-md text-white"><BarChart2 size={14}/>期間分析</button>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
               <div className="p-6 rounded-3xl border text-center bg-gray-50 shadow-sm"><span className="text-[10px] font-black text-gray-400 block mb-1 italic">Total</span><span className="text-4xl font-black text-slate-800">{stats.total}</span></div>
-              <div className="p-6 rounded-3xl border text-center bg-emerald-50 border-emerald-100 shadow-sm"><span className="text-[10px] font-black text-gray-400 block mb-1 text-emerald-600 italic">Hits</span><span className="text-4xl font-black text-emerald-600">{stats.hits}</span></div>
+              <div className="p-6 rounded-3xl border text-center bg-emerald-50 border-emerald-100 shadow-sm"><span className="text-[10px] font-black text-gray-400 block mb-1 text-emerald-600 italic">Zone 0</span><span className="text-4xl font-black text-emerald-600">{stats.hits}</span></div>
               <div className="p-6 rounded-3xl border text-center bg-blue-50 border-blue-100 shadow-sm"><span className="text-[10px] font-black text-gray-400 block mb-1 text-blue-700 italic">Rate</span><span className="text-4xl font-black text-blue-700">{stats.rate}%</span></div>
             </div>
+            {isRangeMode && stats.total > 0 && (
+              <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-9 gap-3 mb-12">
+                {Array.from({ length: 9 }, (_, i) => {
+                  const count = stats.zoneCounts[String(i)];
+                  const pct = ((count / stats.total) * 100).toFixed(1);
+                  return (
+                    <div key={i} className={`p-4 rounded-2xl border text-center shadow-sm ${i === 0 ? "bg-red-50 border-red-100" : "bg-white border-gray-100"}`}>
+                      <span className={`text-[10px] font-black block mb-1 ${i === 0 ? "text-red-600" : "text-gray-400"}`}>{i === 0 ? "的" : zoneLabel(String(i))}</span>
+                      <span className={`text-2xl font-black block ${i === 0 ? "text-red-600" : "text-slate-800"}`}>{pct}%</span>
+                      <span className="text-[10px] font-bold text-gray-400">{count}射</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {!isRangeMode && <div className="mb-12" />}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {filteredHistory.map(h => (
                 <button key={h.id} onClick={()=>loadHistory(h)} className={`p-6 rounded-[2rem] border-4 text-left transition-all flex flex-col justify-between ${editingId===h.id ? "bg-black text-white border-black shadow-2xl scale-105" : "bg-white border-gray-100 hover:border-gray-200 shadow-sm text-slate-900"}`}>
@@ -313,7 +407,7 @@ const App: React.FC = () => {
                     </div>
                     <div className="font-black truncate text-lg italic uppercase">{h.place || "PRACTICE"}</div>
                   </div>
-                  <div className="mt-4 text-[10px] border-t pt-2 flex justify-between opacity-80 font-bold uppercase w-full"><span>{h.shots.length} Shots</span><span className={editingId===h.id ? 'text-emerald-400' : 'text-emerald-600'}>Hits {h.shots.filter(s=>s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的な" || s.zone==="的").length}</span></div>
+                  <div className="mt-4 text-[10px] border-t pt-2 flex justify-between opacity-80 font-bold uppercase w-full"><span>{h.shots.length} Shots</span><span className={editingId===h.id ? 'text-emerald-400' : 'text-emerald-600'}>Hits {h.shots.filter(s => isHitZone(s.zone)).length}</span></div>
                 </button>
               ))}
             </div>
