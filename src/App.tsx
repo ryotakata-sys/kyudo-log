@@ -13,6 +13,7 @@ type Shot = { id: number; x: number; y: number; zone: string; comment: string; }
 type HistoryRecord = { id: number; date: string; place: string; note: string; shots: Shot[]; goal?: string; goalAchieved?: boolean | null; goalMemo?: string; };
 
 const R = 50;
+const R_INNER_BLACK = (R / 5) * 3; // 的の内側にある黒い輪（3番目の同心円）の半径
 const TARGET_SPACING = 9.6 * R;
 const ANDUCHI_W = TARGET_SPACING * 2 + R * 4;
 const ANDUCHI_H = 8.8 * R;
@@ -48,8 +49,8 @@ const getZoneGeom = (): ZoneGeom => {
     innerTop: cy - R,
     innerBottom: cy + R,
     upperMidTop: cy - R - rowH,
-    upperMidBottom: cy - R,
-    lowerMidTop: cy + R,
+    upperMidBottom: cy - R_INNER_BLACK,
+    lowerMidTop: cy + R_INNER_BLACK,
     lowerMidBottom: cy + R + rowH,
     zone7Top: -ANDUCHI_H / 2,
     zone8Bottom: ANDUCHI_H / 2 + STAIRS_H,
