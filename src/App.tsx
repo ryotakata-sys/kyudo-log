@@ -20,19 +20,30 @@ const STAIRS_H = 3.0 * R;
 const TARGET_CY = ANDUCHI_H / 3;
 const VIEW_W = ANDUCHI_W + 100;
 const VIEW_H = ANDUCHI_H + STAIRS_H + 100;
-const X_ZONE_SCALE = VIEW_W / VIEW_H;
 const STORAGE_KEY = "kyudo-log-history";
 
-// 矢所ゾーン.pdf（的半径≈47に対する比率 → SVGの R=50 に換算）
-const PDF_TARGET_R = 47;
-const zr = (pdf: number) => (pdf / PDF_TARGET_R) * R;
-const ZONE_OUTER_TOP = zr(-118.2);
-const ZONE_ROW_56 = zr(-37.4);
-const ZONE_ROW_34 = zr(-12.6);
-const ZONE_ROW_12 = zr(12.2);
-const ZONE_BOTTOM = zr(37.25);
-const ZONE_OUTER_HALF_W = zr(92.3);
-const ZONE_INNER_HALF_W = zr(46.15);
+// 中央的を中心にしたゾーン（①〜⑥は的の外側の帯、計算しやすい R 倍数）
+const ZONE_ROW_H = R * 0.55;
+const ZONE_BAND_W = R * 1.85;
+const ZONE_8_DEPTH = R * 1.1;
+
+type ZoneRect = { id: string; x0: number; y0: number; x1: number; y1: number };
+
+const getZoneRects = (): ZoneRect[] => {
+  const cy = TARGET_CY;
+  const rh = ZONE_ROW_H;
+  const bw = ZONE_BAND_W;
+  return [
+    { id: "7", x0: -bw, y0: cy - R - rh * 2.8, x1: bw, y1: cy - R - rh },
+    { id: "5", x0: -bw, y0: cy - R - rh, x1: 0, y1: cy - R },
+    { id: "6", x0: 0, y0: cy - R - rh, x1: bw, y1: cy - R },
+    { id: "3", x0: -bw, y0: cy - R, x1: -R, y1: cy + R },
+    { id: "4", x0: R, y0: cy - R, x1: bw, y1: cy + R },
+    { id: "1", x0: -bw, y0: cy + R, x1: 0, y1: cy + R + rh },
+    { id: "2", x0: 0, y0: cy + R, x1: bw, y1: cy + R + rh },
+    { id: "8", x0: -bw, y0: cy + R + rh, x1: bw, y1: cy + R + rh + ZONE_8_DEPTH },
+  ];
+};
 
 const ZONE_LABELS: Record<string, string> = {
   "0": "的", "1": "①", "2": "②", "3": "③", "4": "④",
@@ -47,18 +58,16 @@ const isOnCenterTarget = (x: number, y: number) =>
 
 const isHitZone = (zone: string) => zone === "0" || zone === "的" || zone === "的な";
 
+const inRect = (x: number, y: number, r: ZoneRect) =>
+  x >= r.x0 && x < r.x1 && y >= r.y0 && y < r.y1;
+
 const getZone = (x: number, y: number, treatTargetAsHit = true): string => {
   if (treatTargetAsHit && isOnCenterTarget(x, y)) return "0";
-  const relY = y - TARGET_CY;
-  const outerX = ZONE_OUTER_HALF_W * X_ZONE_SCALE;
-  const innerX = ZONE_INNER_HALF_W * X_ZONE_SCALE;
-  if (relY >= ZONE_BOTTOM || y >= ANDUCHI_H / 2) return "8";
-  if (relY < ZONE_OUTER_TOP || Math.abs(x) > outerX) return "7";
-  if (relY < ZONE_ROW_56) return "7";
-  if (x < -innerX || x >= innerX) return "7";
-  if (relY < ZONE_ROW_34) return x < 0 ? "5" : "6";
-  if (relY < ZONE_ROW_12) return x < 0 ? "3" : "4";
-  return x < 0 ? "1" : "2";
+  if (y >= ANDUCHI_H / 2) return "8";
+  for (const rect of getZoneRects()) {
+    if (inRect(x, y, rect)) return rect.id;
+  }
+  return "7";
 };
 
 const zoneLabel = (zone: string) => ZONE_LABELS[zone] ?? zone;
@@ -114,64 +123,40 @@ const ZoneBreakdown: React.FC<{ total: number; zoneCounts: Record<string, number
 const ZoneOverlay: React.FC<{ zoneCounts: Record<string, number>; total: number; layer: "fills" | "decor" }> = ({ zoneCounts, total, layer }) => {
   const pct = (z: number) => total > 0 ? (zoneCounts[String(z)] / total) * 100 : 0;
   const fill = (z: number) => zoneIntensity(pct(z));
-  const yOuterTop = TARGET_CY + ZONE_OUTER_TOP;
-  const yRow56 = TARGET_CY + ZONE_ROW_56;
-  const yRow34 = TARGET_CY + ZONE_ROW_34;
-  const yRow12 = TARGET_CY + ZONE_ROW_12;
-  const yBottom = TARGET_CY + ZONE_BOTTOM;
-  const xInnerL = -ZONE_INNER_HALF_W * X_ZONE_SCALE;
-  const xInnerR = ZONE_INNER_HALF_W * X_ZONE_SCALE;
-  const xOuterL = -ZONE_OUTER_HALF_W * X_ZONE_SCALE;
-  const xOuterR = ZONE_OUTER_HALF_W * X_ZONE_SCALE;
-  const anduchiBottom = ANDUCHI_H / 2;
+  const rects = getZoneRects();
+  const bw = ZONE_BAND_W;
+  const cy = TARGET_CY;
+  const rh = ZONE_ROW_H;
 
   const zoneLabelPos: Record<string, [number, number]> = {
-    "7": [0, TARGET_CY + (ZONE_OUTER_TOP + ZONE_ROW_56) / 2],
-    "5": [xInnerL / 2, TARGET_CY + (ZONE_ROW_56 + ZONE_ROW_34) / 2],
-    "6": [xInnerR / 2, TARGET_CY + (ZONE_ROW_56 + ZONE_ROW_34) / 2],
-    "3": [xInnerL / 2, TARGET_CY + (ZONE_ROW_34 + ZONE_ROW_12) / 2],
-    "4": [xInnerR / 2, TARGET_CY + (ZONE_ROW_34 + ZONE_ROW_12) / 2],
-    "1": [xInnerL / 2, TARGET_CY + (ZONE_ROW_12 + ZONE_BOTTOM) / 2],
-    "2": [xInnerR / 2, TARGET_CY + (ZONE_ROW_12 + ZONE_BOTTOM) / 2],
-    "8": [0, TARGET_CY + (ZONE_BOTTOM + zr(79.4)) / 2],
+    "7": [0, (cy - R - rh * 2.8 + cy - R - rh) / 2],
+    "5": [(-bw - R) / 2, cy - R - rh / 2],
+    "6": [(R + bw) / 2, cy - R - rh / 2],
+    "3": [(-bw - R) / 2, cy],
+    "4": [(R + bw) / 2, cy],
+    "1": [(-bw - R) / 2, cy + R + rh / 2],
+    "2": [(R + bw) / 2, cy + R + rh / 2],
+    "8": [0, cy + R + rh + ZONE_8_DEPTH / 2],
   };
 
   if (layer === "fills") {
     return (
       <g pointerEvents="none">
-        {/* ⑦ 上段 */}
-        <rect x={xOuterL} y={yOuterTop} width={xOuterR - xOuterL} height={yRow56 - yOuterTop} fill={fill(7)} />
-        {/* ⑦ 左右 */}
-        <rect x={xOuterL} y={yRow56} width={xInnerL - xOuterL} height={yBottom - yRow56} fill={fill(7)} />
-        <rect x={xInnerR} y={yRow56} width={xOuterR - xInnerR} height={yBottom - yRow56} fill={fill(7)} />
-        {/* ①〜⑥ */}
-        <rect x={xInnerL} y={yRow56} width={-xInnerL} height={yRow34 - yRow56} fill={fill(5)} />
-        <rect x={0} y={yRow56} width={xInnerR} height={yRow34 - yRow56} fill={fill(6)} />
-        <rect x={xInnerL} y={yRow34} width={-xInnerL} height={yRow12 - yRow34} fill={fill(3)} />
-        <rect x={0} y={yRow34} width={xInnerR} height={yRow12 - yRow34} fill={fill(4)} />
-        <rect x={xInnerL} y={yRow12} width={-xInnerL} height={yBottom - yRow12} fill={fill(1)} />
-        <rect x={0} y={yRow12} width={xInnerR} height={yBottom - yRow12} fill={fill(2)} />
-        {/* ⑧ */}
-        <rect x={xOuterL} y={yBottom} width={xOuterR - xOuterL} height={anduchiBottom - yBottom} fill={fill(8)} />
-        <rect x={xOuterL} y={anduchiBottom} width={xOuterR - xOuterL} height={STAIRS_H} fill={fill(8)} />
-        {/* ⓪ 中央の的のみ */}
-        <circle cx={0} cy={TARGET_CY} r={R} fill={fill(0)} />
+        {rects.map(r => (
+          <rect key={`fill-${r.id}`} x={r.x0} y={r.y0} width={r.x1 - r.x0} height={r.y1 - r.y0} fill={fill(Number(r.id))} />
+        ))}
+        <rect x={-bw} y={cy + R + rh + ZONE_8_DEPTH} width={bw * 2} height={ANDUCHI_H / 2 - (cy + R + rh + ZONE_8_DEPTH) + STAIRS_H} fill={fill(8)} />
+        <circle cx={0} cy={cy} r={R} fill={fill(0)} />
       </g>
     );
   }
 
   return (
     <g pointerEvents="none">
-      <rect x={xOuterL} y={yOuterTop} width={xOuterR - xOuterL} height={yBottom - yOuterTop} fill="none" stroke="#dc2626" strokeWidth={1.5} />
-      <rect x={xInnerL} y={yRow56} width={xInnerR - xInnerL} height={yBottom - yRow56} fill="none" stroke="#dc2626" strokeWidth={1.5} />
-      <line x1={xInnerL} y1={yRow56} x2={xInnerL} y2={yBottom} stroke="#dc2626" strokeWidth={1.5} />
-      <line x1={0} y1={yRow56} x2={0} y2={yBottom} stroke="#dc2626" strokeWidth={1.5} />
-      <line x1={xInnerR} y1={yRow56} x2={xInnerR} y2={yBottom} stroke="#dc2626" strokeWidth={1.5} />
-      <line x1={xInnerL} y1={yRow56} x2={xInnerR} y2={yRow56} stroke="#dc2626" strokeWidth={1.5} />
-      <line x1={xInnerL} y1={yRow34} x2={xInnerR} y2={yRow34} stroke="#dc2626" strokeWidth={1.5} />
-      <line x1={xInnerL} y1={yRow12} x2={xInnerR} y2={yRow12} stroke="#dc2626" strokeWidth={1.5} />
-      <line x1={xInnerL} y1={yBottom} x2={xInnerR} y2={yBottom} stroke="#dc2626" strokeWidth={1.5} />
-      <line x1={xOuterL} y1={yBottom} x2={xOuterR} y2={yBottom} stroke="#dc2626" strokeWidth={1.5} />
+      {rects.map(r => (
+        <rect key={`line-${r.id}`} x={r.x0} y={r.y0} width={r.x1 - r.x0} height={r.y1 - r.y0} fill="none" stroke="#dc2626" strokeWidth={1.5} />
+      ))}
+      <rect x={-bw} y={cy - R - rh * 2.8} width={bw * 2} height={cy + R + rh + ZONE_8_DEPTH - (cy - R - rh * 2.8)} fill="none" stroke="#dc2626" strokeWidth={1.5} />
       {Object.entries(zoneLabelPos).map(([z, [lx, ly]]) => (
         <g key={z}>
           <circle cx={lx} cy={ly} r={14} fill="white" stroke="#dc2626" strokeWidth={1.5} />
@@ -179,8 +164,8 @@ const ZoneOverlay: React.FC<{ zoneCounts: Record<string, number>; total: number;
         </g>
       ))}
       <g>
-        <circle cx={0} cy={TARGET_CY} r={14} fill="white" stroke="#dc2626" strokeWidth={1.5} />
-        <text x={0} y={TARGET_CY} fontSize={13} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill="#dc2626">0</text>
+        <circle cx={0} cy={cy} r={14} fill="white" stroke="#dc2626" strokeWidth={1.5} />
+        <text x={0} y={cy} fontSize={13} textAnchor="middle" dominantBaseline="central" fontWeight="900" fill="#dc2626">0</text>
       </g>
     </g>
   );
