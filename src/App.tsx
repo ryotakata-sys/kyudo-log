@@ -83,10 +83,9 @@ const ZONE_LABELS: Record<string, string> = {
 
 /**
  * 期間分析の最大％を4等分した色濃さ。
- * ご指定の透過率を不透明度として適用:
- * 低％（色濃さ1）=80% → 高％（色濃さ4）=20%
+ * ％が高いほど色を濃くする（不透明度: 低％20% → 高％80%）
  */
-const ZONE_TIER_ALPHA = [0.8, 0.6, 0.4, 0.2] as const;
+const ZONE_TIER_ALPHA = [0.2, 0.4, 0.6, 0.8] as const;
 
 const getZonePct = (count: number, total: number) => (total > 0 ? (count / total) * 100 : 0);
 
@@ -96,10 +95,10 @@ const getMaxZonePct = (zoneCounts: Record<string, number>, total: number) =>
 const getZoneTierAlpha = (pct: number, maxPct: number) => {
   if (pct < 0.1 || maxPct <= 0) return 0;
   const step = maxPct / 4;
-  if (pct <= step) return ZONE_TIER_ALPHA[0];       // 薄い
+  if (pct <= step) return ZONE_TIER_ALPHA[0]; // 薄い
   if (pct <= step * 2) return ZONE_TIER_ALPHA[1];
   if (pct <= step * 3) return ZONE_TIER_ALPHA[2];
-  return ZONE_TIER_ALPHA[3];                        // 濃い
+  return ZONE_TIER_ALPHA[3]; // 濃い
 };
 
 const zoneIntensity = (pct: number, maxPct: number) =>
