@@ -81,8 +81,31 @@ const ZONE_LABELS: Record<string, string> = {
   "5": "⑤", "6": "⑥", "7": "⑦", "8": "⑧",
 };
 
-const zoneIntensity = (pct: number) => `rgba(220, 38, 38, ${Math.max(0.06, Math.min(0.88, pct / 100))})`;
-const zoneIntensitySolid = (pct: number) => `rgba(220, 38, 38, ${Math.max(0.15, Math.min(1, 0.2 + (pct / 100) * 0.8))})`;
+/** 期間分析の最大％を4等分し、透過率80/60/40/20%の4段階で塗りつぶす */
+const ZONE_TIER_ALPHA = [0.2, 0.4, 0.6, 0.8] as const; // 色濃さ1〜4（透過率80%→20%）
+
+const getZonePct = (count: number, total: number) => (total > 0 ? (count / total) * 100 : 0);
+
+const getMaxZonePct = (zoneCounts: Record<string, number>, total: number) =>
+  Math.max(0, ...Array.from({ length: 9 }, (_, i) => getZonePct(zoneCounts[String(i)], total)));
+
+const getZoneTierAlpha = (pct: number, maxPct: number) => {
+  if (pct < 0.1 || maxPct <= 0) return 0;
+  const step = maxPct / 4;
+  if (pct <= step) return ZONE_TIER_ALPHA[0];
+  if (pct <= step * 2) return ZONE_TIER_ALPHA[1];
+  if (pct <= step * 3) return ZONE_TIER_ALPHA[2];
+  return ZONE_TIER_ALPHA[3];
+};
+
+const zoneIntensity = (pct: number, maxPct: number) =>
+  `rgba(220, 38, 38, ${getZoneTierAlpha(pct, maxPct)})`;
+
+const zoneIntensitySolid = (pct: number, maxPct: number) => {
+  const alpha = getZoneTierAlpha(pct, maxPct);
+  if (alpha <= 0) return "rgba(156, 163, 175, 1)"; // 0%はグレー
+  return `rgba(220, 38, 38, ${Math.min(1, alpha + 0.2)})`;
+};
 
 const isOnCenterTarget = (x: number, y: number) =>
   Math.sqrt(x * x + (y - TARGET_CY) ** 2) <= R;
@@ -130,14 +153,16 @@ const getTendencyAnalysis = (shots: Shot[]) => {
   return report;
 };
 
-const ZoneBreakdown: React.FC<{ total: number; zoneCounts: Record<string, number> }> = ({ total, zoneCounts }) => (
+const ZoneBreakdown: React.FC<{ total: number; zoneCounts: Record<string, number> }> = ({ total, zoneCounts }) => {
+  const maxPct = getMaxZonePct(zoneCounts, total);
+  return (
   <div className="space-y-3">
     <p className="text-xs font-black text-gray-400 uppercase tracking-widest">ゾーン別射着率（{total}射）</p>
     {Array.from({ length: 9 }, (_, i) => {
       const count = zoneCounts[String(i)];
-      const pct = total > 0 ? (count / total) * 100 : 0;
+      const pct = getZonePct(count, total);
       const label = i === 0 ? "的（0）" : zoneLabel(String(i));
-      const color = zoneIntensitySolid(pct);
+      const color = zoneIntensitySolid(pct, maxPct);
       return (
         <div key={i}>
           <div className="flex justify-between text-xs font-bold mb-1">
@@ -145,17 +170,19 @@ const ZoneBreakdown: React.FC<{ total: number; zoneCounts: Record<string, number
             <span style={{ color }}>{pct.toFixed(1)}% <span className="text-gray-400 font-medium">({count}射)</span></span>
           </div>
           <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-            <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: color }} />
+            <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: zoneIntensity(pct, maxPct) }} />
           </div>
         </div>
       );
     })}
   </div>
-);
+  );
+};
 
 const ZoneOverlay: React.FC<{ zoneCounts: Record<string, number>; total: number; layer: "fills" | "decor" }> = ({ zoneCounts, total, layer }) => {
-  const pct = (z: number) => total > 0 ? (zoneCounts[String(z)] / total) * 100 : 0;
-  const fill = (z: number) => zoneIntensity(pct(z));
+  const pct = (z: number) => getZonePct(zoneCounts[String(z)], total);
+  const maxPct = getMaxZonePct(zoneCounts, total);
+  const fill = (z: number) => zoneIntensity(pct(z), maxPct);
   const rects = getZoneRects();
   const g = getZoneGeom();
   const { halfW: hw, cy, upperMidTop, upperMidBottom, lowerMidTop, lowerMidBottom, zone7Top, zone8Bottom } = g;
@@ -522,10 +549,11 @@ const App: React.FC = () => {
               <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-9 gap-3 mb-12">
                 {Array.from({ length: 9 }, (_, i) => {
                   const count = stats.zoneCounts[String(i)];
-                  const pct = (count / stats.total) * 100;
-                  const color = zoneIntensitySolid(pct);
+                  const pct = getZonePct(count, stats.total);
+                  const maxPct = getMaxZonePct(stats.zoneCounts, stats.total);
+                  const color = zoneIntensitySolid(pct, maxPct);
                   return (
-                    <div key={i} className="p-4 rounded-2xl border text-center shadow-sm" style={{ backgroundColor: zoneIntensity(pct), borderColor: color }}>
+                    <div key={i} className="p-4 rounded-2xl border text-center shadow-sm" style={{ backgroundColor: zoneIntensity(pct, maxPct), borderColor: color }}>
                       <span className="text-[10px] font-black block mb-1" style={{ color }}>{i === 0 ? "的" : zoneLabel(String(i))}</span>
                       <span className="text-2xl font-black block" style={{ color }}>{pct.toFixed(1)}%</span>
                       <span className="text-[10px] font-bold text-gray-500">{count}射</span>
