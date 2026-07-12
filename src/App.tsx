@@ -30,8 +30,6 @@ const ZONE_ROW_H = R * 0.65;
 type ZoneGeom = {
   halfW: number;
   cy: number;
-  innerTop: number;
-  innerBottom: number;
   upperMidTop: number;
   upperMidBottom: number;
   lowerMidTop: number;
@@ -43,17 +41,18 @@ type ZoneGeom = {
 const getZoneGeom = (): ZoneGeom => {
   const cy = TARGET_CY;
   const rowH = ZONE_ROW_H;
+  const azuchiBottom = ANDUCHI_H / 2; // 安土と階段の境界
   return {
     halfW: ZONE_HALF_W,
     cy,
-    innerTop: cy - R,
-    innerBottom: cy + R,
+    // ⑤⑥下辺・③④上辺 = 内側黒輪の上端 / ①②上辺・③④下辺 = 内側黒輪の下端
     upperMidTop: cy - R - rowH,
     upperMidBottom: cy - R_INNER_BLACK,
     lowerMidTop: cy + R_INNER_BLACK,
-    lowerMidBottom: cy + R + rowH,
+    // ①②下辺・⑧上辺 = 安土と階段の境界
+    lowerMidBottom: azuchiBottom,
     zone7Top: -ANDUCHI_H / 2,
-    zone8Bottom: ANDUCHI_H / 2 + STAIRS_H,
+    zone8Bottom: azuchiBottom + STAIRS_H,
   };
 };
 
@@ -62,14 +61,15 @@ type ZoneRect = { id: string; x0: number; y0: number; x1: number; y1: number };
 const getZoneRects = (): ZoneRect[] => {
   const {
     halfW: hw, upperMidTop, upperMidBottom, lowerMidTop, lowerMidBottom,
-    zone7Top, zone8Bottom, innerTop, innerBottom,
+    zone7Top, zone8Bottom,
   } = getZoneGeom();
   return [
     { id: "7", x0: -hw, y0: zone7Top, x1: hw, y1: upperMidTop },
     { id: "5", x0: -hw, y0: upperMidTop, x1: 0, y1: upperMidBottom },
     { id: "6", x0: 0, y0: upperMidTop, x1: hw, y1: upperMidBottom },
-    { id: "3", x0: -hw, y0: innerTop, x1: -R, y1: innerBottom },
-    { id: "4", x0: R, y0: innerTop, x1: hw, y1: innerBottom },
+    // ③④は⑤⑥・①②と同じ上下境界に合わせて狭める（的円の外側のみ）
+    { id: "3", x0: -hw, y0: upperMidBottom, x1: -R, y1: lowerMidTop },
+    { id: "4", x0: R, y0: upperMidBottom, x1: hw, y1: lowerMidTop },
     { id: "1", x0: -hw, y0: lowerMidTop, x1: 0, y1: lowerMidBottom },
     { id: "2", x0: 0, y0: lowerMidTop, x1: hw, y1: lowerMidBottom },
     { id: "8", x0: -hw, y0: lowerMidBottom, x1: hw, y1: zone8Bottom },
@@ -159,6 +159,7 @@ const ZoneOverlay: React.FC<{ zoneCounts: Record<string, number>; total: number;
   const rects = getZoneRects();
   const g = getZoneGeom();
   const { halfW: hw, cy, upperMidTop, upperMidBottom, lowerMidTop, lowerMidBottom, zone7Top, zone8Bottom } = g;
+  const clipId = `zone-outside-target-${layer}`;
 
   const zoneLabelPos: Record<string, [number, number]> = {
     "7": [0, (zone7Top + upperMidTop) / 2],
@@ -171,12 +172,27 @@ const ZoneOverlay: React.FC<{ zoneCounts: Record<string, number>; total: number;
     "8": [0, (lowerMidBottom + zone8Bottom) / 2],
   };
 
+  // 的円をくり抜くクリップ（他ゾーンの線・塗りがゾーン0に被らない）
+  const outsideTargetClip = (
+    <defs>
+      <clipPath id={clipId} clipPathUnits="userSpaceOnUse">
+        <path
+          clipRule="evenodd"
+          d={`M ${-hw - 2} ${zone7Top - 2} H ${hw + 2} V ${zone8Bottom + 2} H ${-hw - 2} Z M ${R} ${cy} A ${R} ${R} 0 1 0 ${-R} ${cy} A ${R} ${R} 0 1 0 ${R} ${cy}`}
+        />
+      </clipPath>
+    </defs>
+  );
+
   if (layer === "fills") {
     return (
       <g pointerEvents="none">
-        {rects.map(r => (
-          <rect key={`fill-${r.id}`} x={r.x0} y={r.y0} width={r.x1 - r.x0} height={r.y1 - r.y0} fill={fill(Number(r.id))} />
-        ))}
+        {outsideTargetClip}
+        <g clipPath={`url(#${clipId})`}>
+          {rects.map(r => (
+            <rect key={`fill-${r.id}`} x={r.x0} y={r.y0} width={r.x1 - r.x0} height={r.y1 - r.y0} fill={fill(Number(r.id))} />
+          ))}
+        </g>
         <circle cx={0} cy={cy} r={R} fill={fill(0)} />
       </g>
     );
@@ -184,10 +200,15 @@ const ZoneOverlay: React.FC<{ zoneCounts: Record<string, number>; total: number;
 
   return (
     <g pointerEvents="none">
-      {rects.map(r => (
-        <rect key={`line-${r.id}`} x={r.x0} y={r.y0} width={r.x1 - r.x0} height={r.y1 - r.y0} fill="none" stroke="#dc2626" strokeWidth={1.5} />
-      ))}
-      <rect x={-hw} y={zone7Top} width={hw * 2} height={zone8Bottom - zone7Top} fill="none" stroke="#dc2626" strokeWidth={1.5} />
+      {outsideTargetClip}
+      <g clipPath={`url(#${clipId})`}>
+        {rects.map(r => (
+          <rect key={`line-${r.id}`} x={r.x0} y={r.y0} width={r.x1 - r.x0} height={r.y1 - r.y0} fill="none" stroke="#dc2626" strokeWidth={1.5} />
+        ))}
+        <rect x={-hw} y={zone7Top} width={hw * 2} height={zone8Bottom - zone7Top} fill="none" stroke="#dc2626" strokeWidth={1.5} />
+      </g>
+      {/* ゾーン0は的の円のみ */}
+      <circle cx={0} cy={cy} r={R} fill="none" stroke="#dc2626" strokeWidth={1.5} />
       {Object.entries(zoneLabelPos).map(([z, [lx, ly]]) => (
         <g key={z}>
           <circle cx={lx} cy={ly} r={14} fill="white" stroke="#dc2626" strokeWidth={1.5} />
