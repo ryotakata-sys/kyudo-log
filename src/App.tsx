@@ -77,8 +77,15 @@ const getZoneRects = (): ZoneRect[] => {
 };
 
 const ZONE_LABELS: Record<string, string> = {
-  "0": "的", "1": "①", "2": "②", "3": "③", "4": "④",
-  "5": "⑤", "6": "⑥", "7": "⑦", "8": "⑧",
+  "0": "的（0）",
+  "1": "左下（①）",
+  "2": "右下（②）",
+  "3": "左（③）",
+  "4": "右（④）",
+  "5": "左上（⑤）",
+  "6": "右上（⑥）",
+  "7": "上（⑦）",
+  "8": "外（⑧）",
 };
 
 /**
@@ -164,7 +171,7 @@ const ZoneBreakdown: React.FC<{ total: number; zoneCounts: Record<string, number
     {Array.from({ length: 9 }, (_, i) => {
       const count = zoneCounts[String(i)];
       const pct = getZonePct(count, total);
-      const label = i === 0 ? "的（0）" : zoneLabel(String(i));
+      const label = zoneLabel(String(i));
       const color = zoneIntensitySolid(pct, maxPct);
       return (
         <div key={i}>
@@ -223,7 +230,7 @@ const ZoneOverlay: React.FC<{ zoneCounts: Record<string, number>; total: number;
             <rect key={`fill-${r.id}`} x={r.x0} y={r.y0} width={r.x1 - r.x0} height={r.y1 - r.y0} fill={fill(Number(r.id))} />
           ))}
         </g>
-        <circle cx={0} cy={cy} r={R} fill={fill(0)} />
+        {/* ゾーン0の塗りは的の描画後（decor層）で重ねる */}
       </g>
     );
   }
@@ -234,6 +241,8 @@ const ZoneOverlay: React.FC<{ zoneCounts: Record<string, number>; total: number;
   return (
     <g pointerEvents="none">
       {outsideTargetClip}
+      {/* 的の上にゾーン0の色を重ねる（期間分析の％に応じた濃さ） */}
+      <circle cx={0} cy={cy} r={R} fill={fill(0)} />
       <g clipPath={`url(#${clipId})`}>
         {lineRects.map(r => (
           <rect key={`line-${r.id}`} x={r.x0} y={r.y0} width={r.x1 - r.x0} height={r.y1 - r.y0} fill="none" stroke="#dc2626" strokeWidth={1.5} />
@@ -557,7 +566,7 @@ const App: React.FC = () => {
                   const color = zoneIntensitySolid(pct, maxPct);
                   return (
                     <div key={i} className="p-4 rounded-2xl border text-center shadow-sm" style={{ backgroundColor: zoneIntensity(pct, maxPct), borderColor: color }}>
-                      <span className="text-[10px] font-black block mb-1" style={{ color }}>{i === 0 ? "的" : zoneLabel(String(i))}</span>
+                      <span className="text-[10px] font-black block mb-1" style={{ color }}>{zoneLabel(String(i))}</span>
                       <span className="text-2xl font-black block" style={{ color }}>{pct.toFixed(1)}%</span>
                       <span className="text-[10px] font-bold text-gray-500">{count}射</span>
                     </div>
