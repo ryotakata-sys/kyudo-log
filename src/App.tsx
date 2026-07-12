@@ -67,9 +67,9 @@ const getZoneRects = (): ZoneRect[] => {
     { id: "7", x0: -hw, y0: zone7Top, x1: hw, y1: upperMidTop },
     { id: "5", x0: -hw, y0: upperMidTop, x1: 0, y1: upperMidBottom },
     { id: "6", x0: 0, y0: upperMidTop, x1: hw, y1: upperMidBottom },
-    // ③④は⑤⑥・①②と同じ上下境界に合わせて狭める（的円の外側のみ）
-    { id: "3", x0: -hw, y0: upperMidBottom, x1: -R, y1: lowerMidTop },
-    { id: "4", x0: R, y0: upperMidBottom, x1: hw, y1: lowerMidTop },
+    // ③④は的寄りまで（的円内は getZone で0優先）。的側の縦線は描画しない
+    { id: "3", x0: -hw, y0: upperMidBottom, x1: 0, y1: lowerMidTop },
+    { id: "4", x0: 0, y0: upperMidBottom, x1: hw, y1: lowerMidTop },
     { id: "1", x0: -hw, y0: lowerMidTop, x1: 0, y1: lowerMidBottom },
     { id: "2", x0: 0, y0: lowerMidTop, x1: hw, y1: lowerMidBottom },
     { id: "8", x0: -hw, y0: lowerMidBottom, x1: hw, y1: zone8Bottom },
@@ -165,8 +165,8 @@ const ZoneOverlay: React.FC<{ zoneCounts: Record<string, number>; total: number;
     "7": [0, (zone7Top + upperMidTop) / 2],
     "5": [-hw / 2, (upperMidTop + upperMidBottom) / 2],
     "6": [hw / 2, (upperMidTop + upperMidBottom) / 2],
-    "3": [(-hw - R) / 2, cy],
-    "4": [(hw + R) / 2, cy],
+    "3": [-hw / 2, cy],
+    "4": [hw / 2, cy],
     "1": [-hw / 2, (lowerMidTop + lowerMidBottom) / 2],
     "2": [hw / 2, (lowerMidTop + lowerMidBottom) / 2],
     "8": [0, (lowerMidBottom + zone8Bottom) / 2],
@@ -198,13 +198,24 @@ const ZoneOverlay: React.FC<{ zoneCounts: Record<string, number>; total: number;
     );
   }
 
+  // 境界線：③④の的側（±R）の縦線は描かず、的円までゾーンが続く見た目にする
+  const lineRects = rects.filter(r => r.id !== "3" && r.id !== "4");
+
   return (
     <g pointerEvents="none">
       {outsideTargetClip}
       <g clipPath={`url(#${clipId})`}>
-        {rects.map(r => (
+        {lineRects.map(r => (
           <rect key={`line-${r.id}`} x={r.x0} y={r.y0} width={r.x1 - r.x0} height={r.y1 - r.y0} fill="none" stroke="#dc2626" strokeWidth={1.5} />
         ))}
+        {/* ③④は外枠・上下・中央縦線のみ（的寄りの縦線なし） */}
+        <line x1={-hw} y1={upperMidBottom} x2={-hw} y2={lowerMidTop} stroke="#dc2626" strokeWidth={1.5} />
+        <line x1={hw} y1={upperMidBottom} x2={hw} y2={lowerMidTop} stroke="#dc2626" strokeWidth={1.5} />
+        <line x1={-hw} y1={upperMidBottom} x2={0} y2={upperMidBottom} stroke="#dc2626" strokeWidth={1.5} />
+        <line x1={0} y1={upperMidBottom} x2={hw} y2={upperMidBottom} stroke="#dc2626" strokeWidth={1.5} />
+        <line x1={-hw} y1={lowerMidTop} x2={0} y2={lowerMidTop} stroke="#dc2626" strokeWidth={1.5} />
+        <line x1={0} y1={lowerMidTop} x2={hw} y2={lowerMidTop} stroke="#dc2626" strokeWidth={1.5} />
+        <line x1={0} y1={upperMidBottom} x2={0} y2={lowerMidTop} stroke="#dc2626" strokeWidth={1.5} />
         <rect x={-hw} y={zone7Top} width={hw * 2} height={zone8Bottom - zone7Top} fill="none" stroke="#dc2626" strokeWidth={1.5} />
       </g>
       {/* ゾーン0は的の円のみ */}
